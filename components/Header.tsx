@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCart } from '@/lib/cart';
@@ -23,12 +24,15 @@ export default function Header() {
     <>
       <header className="sticky top-0 z-40 border-b border-rose-100 bg-white/85 backdrop-blur dark:border-stone-800 dark:bg-stone-950/85">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
-          <Link href="/" className="flex items-baseline gap-2">
-            <span className="font-serif text-2xl tracking-wide text-stone-900 dark:text-stone-50">
-              Roxanne
-            </span>
-            <span className="text-xs font-semibold uppercase tracking-[0.25em] text-rose-600 dark:text-rose-400">
-              Cosmetics
+          <Link href="/" className="flex items-center gap-2.5">
+            <Image src="/logo.svg" alt="Roxanne Cosmetics logo" width={40} height={40} className="h-10 w-10" />
+            <span className="flex items-baseline gap-2">
+              <span className="font-serif text-2xl tracking-wide text-stone-900 dark:text-stone-50">
+                Roxanne
+              </span>
+              <span className="text-xs font-semibold uppercase tracking-[0.25em] text-rose-600 dark:text-rose-400">
+                Cosmetics
+              </span>
             </span>
           </Link>
           <nav className="hidden items-center gap-6 md:flex">

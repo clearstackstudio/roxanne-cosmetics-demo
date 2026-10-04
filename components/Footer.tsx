@@ -38,6 +38,14 @@ export default function Footer() {
         <a href="https://www.weclearstack.com" className="underline hover:text-stone-600 dark:hover:text-stone-400">
           ClearStack Studio
         </a>
+        {" "}·{" "}
+        <Link href="/privacy" className="underline hover:text-stone-600 dark:hover:text-stone-400">
+          Privacy
+        </Link>
+        {" "}·{" "}
+        <Link href="/terms" className="underline hover:text-stone-600 dark:hover:text-stone-400">
+          Terms
+        </Link>
       </p>
     </footer>
   );

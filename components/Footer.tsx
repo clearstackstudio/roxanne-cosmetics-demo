@@ -33,6 +33,12 @@ export default function Footer() {
           </p>
         </div>
       </div>
+      <p className="pb-6 text-center text-xs text-stone-400 dark:text-stone-600">
+        Built by{" "}
+        <a href="https://www.weclearstack.com" className="underline hover:text-stone-600 dark:hover:text-stone-400">
+          ClearStack Studio
+        </a>
+      </p>
     </footer>
   );
 }

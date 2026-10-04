@@ -35,6 +35,8 @@ export interface Product {
   id: string;
   name: string;
   category: CategoryId;
+  /** Who the product is for — drives the For Her / For Him filters. */
+  audience: 'women' | 'men' | 'unisex';
   /** Price in dollars. */
   price: number;
   size: string;
@@ -55,6 +57,7 @@ export const PRODUCTS: Product[] = [
     id: 'velours-de-rose',
     name: 'Velours de Rose',
     category: 'perfume',
+    audience: 'women',
     price: 88,
     size: '50 ml · Eau de Parfum',
     description:
@@ -68,6 +71,7 @@ export const PRODUCTS: Product[] = [
     id: 'nuit-dor',
     name: "Nuit d'Or",
     category: 'perfume',
+    audience: 'women',
     price: 96,
     size: '50 ml · Eau de Parfum',
     description:
@@ -81,6 +85,7 @@ export const PRODUCTS: Product[] = [
     id: 'fleur-blanche',
     name: 'Fleur Blanche',
     category: 'perfume',
+    audience: 'women',
     price: 72,
     size: '30 ml · Eau de Parfum',
     description:
@@ -93,6 +98,7 @@ export const PRODUCTS: Product[] = [
     id: 'citrus-eclat',
     name: 'Citrus Éclat',
     category: 'perfume',
+    audience: 'unisex',
     price: 58,
     size: '50 ml · Eau de Toilette',
     description:
@@ -107,6 +113,7 @@ export const PRODUCTS: Product[] = [
     id: 'bois-sauvage',
     name: 'Bois Sauvage',
     category: 'cologne',
+    audience: 'men',
     price: 92,
     size: '50 ml · Eau de Parfum',
     description:
@@ -120,6 +127,7 @@ export const PRODUCTS: Product[] = [
     id: 'marine-bleu',
     name: 'Marine Bleu',
     category: 'cologne',
+    audience: 'men',
     price: 64,
     size: '50 ml · Eau de Toilette',
     description:
@@ -132,6 +140,7 @@ export const PRODUCTS: Product[] = [
     id: 'cuir-noir',
     name: 'Cuir Noir',
     category: 'cologne',
+    audience: 'men',
     price: 98,
     size: '50 ml · Eau de Parfum',
     description:
@@ -146,6 +155,7 @@ export const PRODUCTS: Product[] = [
     id: 'eclat-vitamin-c',
     name: 'Éclat Vitamin C Serum',
     category: 'skincare',
+    audience: 'unisex',
     price: 46,
     size: '30 ml',
     description:
@@ -158,6 +168,7 @@ export const PRODUCTS: Product[] = [
     id: 'hydra-rose',
     name: 'Hydra Rose Moisturizer',
     category: 'skincare',
+    audience: 'unisex',
     price: 38,
     size: '50 ml',
     description:
@@ -169,6 +180,7 @@ export const PRODUCTS: Product[] = [
     id: 'gentle-foam',
     name: 'Gentle Foam Cleanser',
     category: 'skincare',
+    audience: 'unisex',
     price: 24,
     size: '150 ml',
     description:
@@ -180,6 +192,7 @@ export const PRODUCTS: Product[] = [
     id: 'revive-eye',
     name: 'Revive Eye Cream',
     category: 'skincare',
+    audience: 'unisex',
     price: 34,
     size: '15 ml',
     description:
@@ -193,6 +206,7 @@ export const PRODUCTS: Product[] = [
     id: 'velvet-matte-rouge',
     name: 'Velvet Matte Lipstick — Rouge',
     category: 'makeup',
+    audience: 'unisex',
     price: 22,
     size: '3.5 g',
     description:
@@ -205,6 +219,7 @@ export const PRODUCTS: Product[] = [
     id: 'lumiere-foundation',
     name: 'Lumière Foundation',
     category: 'makeup',
+    audience: 'unisex',
     price: 36,
     size: '30 ml · 12 shades',
     description:
@@ -216,6 +231,7 @@ export const PRODUCTS: Product[] = [
     id: 'blush-poudre-peche',
     name: 'Blush Poudre — Pêche',
     category: 'makeup',
+    audience: 'unisex',
     price: 26,
     size: '8 g',
     description:
@@ -227,6 +243,7 @@ export const PRODUCTS: Product[] = [
     id: 'mascara-volume-noir',
     name: 'Mascara Volume Noir',
     category: 'makeup',
+    audience: 'unisex',
     price: 24,
     size: '8 ml',
     description:
@@ -238,6 +255,7 @@ export const PRODUCTS: Product[] = [
     id: 'discovery-set',
     name: 'Discovery Set — Six Icons',
     category: 'perfume',
+    audience: 'unisex',
     price: 28,
     size: '6 × 2 ml',
     description:

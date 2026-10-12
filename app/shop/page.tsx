@@ -12,7 +12,7 @@ export default async function ShopPage({
     ? (cat as CategoryId)
     : null;
   const audience: 'women' | 'men' | null = aud === 'women' || aud === 'men' ? aud : null;
-  const isFragrance = active === 'perfume' || active === 'cologne';
+  const isFragrance = active === 'fragrance';
   let items = active ? PRODUCTS.filter((p) => p.category === active) : PRODUCTS;
   if (isFragrance && audience) {
     items = items.filter((p) => p.audience === audience || p.audience === 'unisex');

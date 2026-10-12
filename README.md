@@ -35,7 +35,7 @@ array entries (or import from the inventory JSON), keep the same shape:
 
 ```ts
 {
-  id: 'unique-slug', name: '...', category: 'perfume' | 'cologne' | 'skincare' | 'makeup',
+  id: 'unique-slug', name: '...', category: 'fragrance' | 'skincare' | 'makeup',
   price: 88, size: '50 ml · Eau de Parfum', description: '...',
   notes: ['Rose', 'Jasmine'],   // optional — shown as chips on fragrance pages
   featured: true,               // optional — shows on the homepage

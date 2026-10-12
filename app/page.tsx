@@ -19,7 +19,7 @@ export default function HomePage() {
             Find your signature scent
           </h1>
           <p className="mt-4 max-w-md text-stone-600 dark:text-stone-300">
-            Curated perfumes, colognes, skincare and makeup — handpicked by Roxanne.
+            Curated fragrances, skincare and makeup — handpicked by Roxanne.
             Browse the collection and find your next favorite.
           </p>
           <div className="mt-6 flex gap-3">
@@ -30,10 +30,10 @@ export default function HomePage() {
               Browse the collection
             </Link>
             <Link
-              href="/shop?cat=perfume"
+              href="/shop?cat=fragrance"
               className="rounded-full border border-stone-300 px-6 py-3 text-sm font-semibold text-stone-700 hover:border-rose-400 hover:text-rose-600 dark:border-stone-700 dark:text-stone-200 dark:hover:text-rose-400"
             >
-              Bestselling perfumes
+              Bestselling fragrances
             </Link>
           </div>
         </div>
@@ -48,7 +48,7 @@ export default function HomePage() {
       {/* Categories */}
       <section className="py-8">
         <h2 className="font-serif text-2xl text-stone-900 dark:text-stone-50">Shop by category</h2>
-        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3">
           {CATEGORIES.map((c) => (
             <Link
               key={c.id}

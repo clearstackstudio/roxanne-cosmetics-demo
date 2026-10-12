@@ -15,8 +15,9 @@ export default function Footer() {
             Shop
           </p>
           <ul className="mt-2 space-y-1 text-sm">
-            <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=perfume">Perfumes</Link></li>
-            <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=cologne">Colognes</Link></li>
+            <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=fragrance">Fragrance</Link></li>
+            <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=fragrance&aud=women">For Her</Link></li>
+            <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=fragrance&aud=men">For Him</Link></li>
             <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=skincare">Skincare</Link></li>
             <li><Link className="text-stone-600 hover:text-rose-600 dark:text-stone-300" href="/shop?cat=makeup">Makeup</Link></li>
           </ul>

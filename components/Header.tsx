@@ -6,8 +6,9 @@ import { usePathname } from 'next/navigation';
 
 const NAV = [
   { href: '/shop', label: 'Shop' },
-  { href: '/shop?cat=perfume', label: 'Perfumes' },
-  { href: '/shop?cat=cologne', label: 'Colognes' },
+  { href: '/shop?cat=fragrance', label: 'Fragrance' },
+  { href: '/shop?cat=fragrance&aud=women', label: 'For Her' },
+  { href: '/shop?cat=fragrance&aud=men', label: 'For Him' },
   { href: '/shop?cat=skincare', label: 'Skincare' },
   { href: '/shop?cat=makeup', label: 'Makeup' },
 ];

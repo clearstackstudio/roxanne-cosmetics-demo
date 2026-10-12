@@ -10,7 +10,7 @@ import Footer from '@/components/Footer';
 export const metadata: Metadata = {
   title: 'Roxanne Cosmetics — Fine Fragrance, Skincare & Makeup',
   description:
-    'Roxanne Cosmetics: curated perfumes, colognes, skincare and makeup. Browse the collection — product information only, no online ordering.',
+    'Roxanne Cosmetics: curated fragrances, skincare and makeup. Browse the collection — product information only, no online ordering.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

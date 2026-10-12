@@ -16,7 +16,7 @@
 // file in `public/products/`; the photo will be used automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type CategoryId = 'perfume' | 'cologne' | 'skincare' | 'makeup';
+export type CategoryId = 'fragrance' | 'skincare' | 'makeup';
 
 export interface Category {
   id: CategoryId;
@@ -25,8 +25,7 @@ export interface Category {
 }
 
 export const CATEGORIES: Category[] = [
-  { id: 'perfume', name: 'Perfumes', tagline: 'Eau de parfum & eau de toilette for her' },
-  { id: 'cologne', name: 'Colognes', tagline: 'Bold, fresh scents for him' },
+  { id: 'fragrance', name: 'Fragrance', tagline: 'Scents for her & for him' },
   { id: 'skincare', name: 'Skincare', tagline: 'Cleanse, hydrate, glow' },
   { id: 'makeup', name: 'Makeup', tagline: 'Color that lasts all day' },
 ];
@@ -56,11 +55,11 @@ export interface Product {
 }
 
 export const PRODUCTS: Product[] = [
-  // ── Perfumes ──────────────────────────────────────────────────────────────
+  // ── Fragrance — for her ──────────────────────────────────────────────────────────────
   {
     id: 'velours-de-rose',
     name: 'Velours de Rose',
-    category: 'perfume',
+    category: 'fragrance',
     audience: 'women',
     price: 88,
     size: '50 ml · Eau de Parfum',
@@ -74,7 +73,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'nuit-dor',
     name: "Nuit d'Or",
-    category: 'perfume',
+    category: 'fragrance',
     audience: 'women',
     price: 96,
     size: '50 ml · Eau de Parfum',
@@ -88,7 +87,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'fleur-blanche',
     name: 'Fleur Blanche',
-    category: 'perfume',
+    category: 'fragrance',
     audience: 'women',
     price: 72,
     size: '30 ml · Eau de Parfum',
@@ -101,7 +100,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'citrus-eclat',
     name: 'Citrus Éclat',
-    category: 'perfume',
+    category: 'fragrance',
     audience: 'unisex',
     price: 58,
     size: '50 ml · Eau de Toilette',
@@ -112,11 +111,11 @@ export const PRODUCTS: Product[] = [
     visual: { hue: 85, shape: 'tall' },
   },
 
-  // ── Colognes ──────────────────────────────────────────────────────────────
+  // ── Fragrance — for him ──────────────────────────────────────────────────────────────
   {
     id: 'bois-sauvage',
     name: 'Bois Sauvage',
-    category: 'cologne',
+    category: 'fragrance',
     audience: 'men',
     price: 92,
     size: '50 ml · Eau de Parfum',
@@ -130,7 +129,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'marine-bleu',
     name: 'Marine Bleu',
-    category: 'cologne',
+    category: 'fragrance',
     audience: 'men',
     price: 64,
     size: '50 ml · Eau de Toilette',
@@ -143,7 +142,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'cuir-noir',
     name: 'Cuir Noir',
-    category: 'cologne',
+    category: 'fragrance',
     audience: 'men',
     price: 98,
     size: '50 ml · Eau de Parfum',
@@ -258,7 +257,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'discovery-set',
     name: 'Discovery Set — Six Icons',
-    category: 'perfume',
+    category: 'fragrance',
     audience: 'unisex',
     price: 28,
     size: '6 × 2 ml',

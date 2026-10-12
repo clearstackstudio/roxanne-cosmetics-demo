@@ -20,14 +20,14 @@ export default function HomePage() {
           </h1>
           <p className="mt-4 max-w-md text-stone-600 dark:text-stone-300">
             Curated perfumes, colognes, skincare and makeup — handpicked by Roxanne.
-            Browse the collection, fill your bag, and check out securely.
+            Browse the collection and find your next favorite.
           </p>
           <div className="mt-6 flex gap-3">
             <Link
               href="/shop"
               className="rounded-full bg-stone-900 px-6 py-3 text-sm font-semibold text-white hover:bg-stone-700 dark:bg-rose-600 dark:hover:bg-rose-500"
             >
-              Shop the collection
+              Browse the collection
             </Link>
             <Link
               href="/shop?cat=perfume"

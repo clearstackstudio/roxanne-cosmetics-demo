@@ -16,19 +16,19 @@ export default function TermsPage() {
           </h2>
           <p className="mt-2">
             This is a concept demonstration. Products, descriptions, prices, and
-            availability shown here are illustrative placeholders. Orders placed here
-            are not real and no payment is processed.
+            availability shown here are illustrative placeholders.
           </p>
         </section>
 
         <section>
           <h2 className="text-lg font-bold text-stone-900 dark:text-stone-100">
-            Orders and payment
+            Product information only
           </h2>
           <p className="mt-2">
-            The checkout on this demo runs in a sandbox: it simulates the ordering flow
-            without charging any card. In a live deployment, orders would be subject to
-            the shop&apos;s actual availability, pricing, shipping, and return policies.
+            This site provides product information only — nothing is sold
+            online here and no payment is taken. Purchases are made in the
+            shop and are subject to the shop&apos;s actual availability,
+            pricing, and return policies.
           </p>
         </section>
       </div>

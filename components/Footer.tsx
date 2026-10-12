@@ -29,7 +29,7 @@ export default function Footer() {
             Demo storefront — address &amp; hours go here.
           </p>
           <p className="mt-1 text-xs text-stone-400 dark:text-stone-500">
-            Demo site · placeholder products · Square sandbox checkout (no real charges)
+            Demo site · placeholder products · product information only — no online ordering
           </p>
         </div>
       </div>

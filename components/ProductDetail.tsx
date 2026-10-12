@@ -1,12 +1,7 @@
-'use client';
-
-import { useState } from 'react';
 import Link from 'next/link';
 import { CATEGORIES, formatPrice, type Product } from '@/data/products';
-import { useCart } from '@/lib/cart';
 import { ProductImage } from '@/components/ProductVisual';
 import ProductCard from '@/components/ProductCard';
-import QtyStepper from '@/components/QtyStepper';
 
 export default function ProductDetail({
   product,
@@ -15,17 +10,7 @@ export default function ProductDetail({
   product: Product;
   related: Product[];
 }) {
-  const { add } = useCart();
-  const [qty, setQty] = useState(1);
-  const [added, setAdded] = useState(false);
-
   const category = CATEGORIES.find((c) => c.id === product.category);
-
-  const handleAdd = () => {
-    add(product.id, qty);
-    setAdded(true);
-    setTimeout(() => setAdded(false), 2000);
-  };
 
   return (
     <div className="py-10">
@@ -77,15 +62,10 @@ export default function ProductDetail({
             </p>
           )}
 
-          <div className="mt-6 flex items-center gap-4">
-            <QtyStepper qty={qty} onChange={(q) => setQty(Math.max(1, q))} />
-            <button
-              onClick={handleAdd}
-              className="flex-1 rounded-full bg-stone-900 py-3 text-sm font-semibold text-white transition-colors hover:bg-stone-700 dark:bg-rose-600 dark:hover:bg-rose-500"
-            >
-              {added ? 'Added ✓' : 'Add to bag'}
-            </button>
-          </div>
+          <p className="mt-6 rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-3 text-sm text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">
+            Available in store at Roxanne Cosmetics. This site is product
+            information only — no online ordering.
+          </p>
         </div>
       </div>
 

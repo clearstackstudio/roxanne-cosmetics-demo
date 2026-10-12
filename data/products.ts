@@ -6,7 +6,9 @@
 // invented for the click-through demo because no real product list was provided.
 // To go live, replace the entries in PRODUCTS (or import them from a real
 // source) and set `placeholder: false` on each real product. No other file needs
-// to change: the shop, product pages, cart, and checkout all read from here.
+// to change: the shop and product pages read from here. Real products are
+// collected with the barcode inventory tool at /inventory — its JSON export
+// maps onto these fields (barcode included) for catalog import.
 //
 // Each product gets an elegant generated visual (see components/ProductVisual.tsx)
 // built from `visual.hue` + `visual.shape` — no photo files needed. When real
@@ -45,6 +47,8 @@ export interface Product {
   featured?: boolean;
   /** True while this product is demo placeholder data. */
   placeholder: boolean;
+  /** UPC/EAN barcode, when the product was collected via the inventory tool. */
+  barcode?: string;
   /** Optional real photo path, e.g. "/products/velours-de-rose.jpg". */
   photo?: string;
   /** Drives the generated placeholder visual. */

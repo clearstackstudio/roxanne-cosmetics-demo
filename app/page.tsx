@@ -6,6 +6,18 @@ import { ProductVisual } from '@/components/ProductVisual';
 const heroProduct = PRODUCTS.find((p) => p.id === 'velours-de-rose') ?? PRODUCTS[0];
 const featured = PRODUCTS.filter((p) => p.featured);
 
+// Homepage category cards: Fragrance is split into separate For Her /
+// For Him cards (owner request, 2026-10-12); the other categories map 1:1.
+const CATEGORY_CARDS = [
+  { name: 'For Her', tagline: 'Fragrances for her', href: '/shop?cat=fragrance&aud=women' },
+  { name: 'For Him', tagline: 'Fragrances for him', href: '/shop?cat=fragrance&aud=men' },
+  ...CATEGORIES.filter((c) => c.id !== 'fragrance').map((c) => ({
+    name: c.name,
+    tagline: c.tagline,
+    href: `/shop?cat=${c.id}`,
+  })),
+];
+
 export default function HomePage() {
   return (
     <div>
@@ -48,11 +60,11 @@ export default function HomePage() {
       {/* Categories */}
       <section className="py-8">
         <h2 className="font-serif text-2xl text-stone-900 dark:text-stone-50">Shop by category</h2>
-        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3">
-          {CATEGORIES.map((c) => (
+        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+          {CATEGORY_CARDS.map((c) => (
             <Link
-              key={c.id}
-              href={`/shop?cat=${c.id}`}
+              key={c.name}
+              href={c.href}
               className="rounded-2xl border border-stone-200 bg-white p-5 transition-shadow hover:shadow-md dark:border-stone-800 dark:bg-stone-900"
             >
               <p className="font-serif text-lg text-stone-900 dark:text-stone-100">{c.name}</p>

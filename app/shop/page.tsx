@@ -15,9 +15,15 @@ export default async function ShopPage({
   const isFragrance = active === 'fragrance';
   let items = active ? PRODUCTS.filter((p) => p.category === active) : PRODUCTS;
   if (isFragrance && audience) {
-    items = items.filter((p) => p.audience === audience || p.audience === 'unisex');
+    // For Her / For Him are fully separate (owner request, 2026-10-12):
+    // unisex scents appear only in the combined Fragrance view.
+    items = items.filter((p) => p.audience === audience);
   }
-  const activeName = active ? CATEGORIES.find((c) => c.id === active)?.name : 'The collection';
+  const baseName = active ? CATEGORIES.find((c) => c.id === active)?.name : 'The collection';
+  const activeName =
+    isFragrance && audience
+      ? `${baseName} — ${audience === 'women' ? 'For Her' : 'For Him'}`
+      : baseName;
 
   return (
     <div className="py-10">

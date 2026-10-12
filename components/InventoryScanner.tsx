@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IScannerControls } from '@zxing/browser';
 
+type InvCategory = 'fragrance' | 'skincare' | 'makeup';
+type InvAudience = 'women' | 'men' | 'unisex';
+
 interface InvItem {
   barcode: string; // '' when the item has no barcode
   name: string;
@@ -10,6 +13,10 @@ interface InvItem {
   size: string;
   price: number | null;
   qty: number;
+  /** Catalog category — '' until she picks one (required before export is importable). */
+  category: InvCategory | '';
+  /** Who it's sold for — drives the For Her / For Him views. */
+  audience: InvAudience;
 }
 
 interface PendingItem {
@@ -19,13 +26,40 @@ interface PendingItem {
   size: string;
   price: string;
   qty: number;
+  category: InvCategory | '';
+  audience: InvAudience;
 }
+
+const CATEGORY_OPTIONS: { id: InvCategory; label: string }[] = [
+  { id: 'fragrance', label: 'Fragrance (perfume / cologne)' },
+  { id: 'skincare', label: 'Skincare' },
+  { id: 'makeup', label: 'Makeup' },
+];
+
+const AUDIENCE_OPTIONS: { id: InvAudience; label: string }[] = [
+  { id: 'women', label: 'For Her' },
+  { id: 'men', label: 'For Him' },
+  { id: 'unisex', label: 'For Everyone' },
+];
 
 const LS_KEY = 'roxanne-inventory-v1';
 
+function guessCategory(p: Record<string, unknown>): InvCategory | '' {
+  const tags = [
+    ...(Array.isArray(p.categories_tags) ? p.categories_tags : []),
+    typeof p.categories === 'string' ? p.categories : '',
+  ]
+    .join(' ')
+    .toLowerCase();
+  if (/perfume|fragrance|cologne|eau-de|parfum/.test(tags)) return 'fragrance';
+  if (/makeup|make-up|lipstick|mascara|foundation|cosmetic/.test(tags)) return 'makeup';
+  if (/skin|cream|lotion|serum|face|body|hair|shampoo|soap/.test(tags)) return 'skincare';
+  return '';
+}
+
 async function lookupBarcode(
   code: string,
-): Promise<{ name: string; brand: string; size: string } | null> {
+): Promise<{ name: string; brand: string; size: string; category: InvCategory | '' } | null> {
   // Open Beauty Facts first (cosmetics), Open Food Facts as a fallback —
   // both are free, keyless, and CORS-friendly.
   const urls = [
@@ -44,6 +78,7 @@ async function lookupBarcode(
           brand:
             typeof p.brands === 'string' ? p.brands.split(',')[0].trim() : '',
           size: typeof p.quantity === 'string' ? p.quantity : '',
+          category: guessCategory(p as Record<string, unknown>),
         };
       }
     } catch {
@@ -109,7 +144,22 @@ export default function InventoryScanner() {
     try {
       const raw = localStorage.getItem(LS_KEY);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from localStorage after mount (see comment above)
-      if (raw) setItems(JSON.parse(raw) as InvItem[]);
+      if (raw) {
+        // Normalize lists saved before category/audience existed.
+        const parsed = JSON.parse(raw) as Partial<InvItem>[];
+        setItems(
+          parsed.map((i) => ({
+            barcode: i.barcode ?? '',
+            name: i.name ?? '',
+            brand: i.brand ?? '',
+            size: i.size ?? '',
+            price: i.price ?? null,
+            qty: i.qty ?? 1,
+            category: i.category ?? '',
+            audience: i.audience ?? 'unisex',
+          })),
+        );
+      }
     } catch {
       // corrupted storage — start fresh
     }
@@ -153,6 +203,8 @@ export default function InventoryScanner() {
       size: found?.size ?? '',
       price: '',
       qty: 1,
+      category: found?.category ?? '',
+      audience: 'unisex',
     });
     setStatus(
       found
@@ -196,6 +248,10 @@ export default function InventoryScanner() {
       setStatus('Give the product a name before saving.');
       return;
     }
+    if (!pending.category) {
+      setStatus('Pick a category (Fragrance, Skincare, or Makeup) before saving — the website needs it to place the product.');
+      return;
+    }
     const price =
       pending.price.trim() === '' ? null : Number.parseFloat(pending.price);
     setItems((prev) => [
@@ -206,6 +262,8 @@ export default function InventoryScanner() {
         size: pending.size.trim(),
         price: price !== null && Number.isFinite(price) ? price : null,
         qty: Math.max(1, Math.floor(pending.qty) || 1),
+        category: pending.category,
+        audience: pending.audience,
       },
       ...prev,
     ]);
@@ -229,9 +287,11 @@ export default function InventoryScanner() {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const rows = [
-      'barcode,name,brand,size,price,quantity',
+      'barcode,name,brand,size,price,quantity,category,audience',
       ...items.map((i) =>
-        [i.barcode, i.name, i.brand, i.size, i.price ?? '', i.qty].map(esc).join(','),
+        [i.barcode, i.name, i.brand, i.size, i.price ?? '', i.qty, i.category, i.audience]
+          .map(esc)
+          .join(','),
       ),
     ];
     download(`roxanne-inventory-${today}.csv`, rows.join('\n'), 'text/csv');
@@ -304,7 +364,7 @@ export default function InventoryScanner() {
           <button
             onClick={() => {
               stopScanner();
-              setPending({ barcode: '', name: '', brand: '', size: '', price: '', qty: 1 });
+              setPending({ barcode: '', name: '', brand: '', size: '', price: '', qty: 1, category: '', audience: 'unisex' });
               setStatus('Adding an item with no barcode — fill in the name.');
             }}
             className="mt-2 text-sm font-medium text-rose-600 dark:text-rose-400"
@@ -333,6 +393,37 @@ export default function InventoryScanner() {
                 className={inputCls}
                 aria-label="Product name"
               />
+              <div className="grid grid-cols-2 gap-3">
+                <select
+                  value={pending.category}
+                  onChange={(e) =>
+                    setPending({ ...pending, category: e.target.value as InvCategory | '' })
+                  }
+                  className={inputCls}
+                  aria-label="Category"
+                >
+                  <option value="">Category * — choose…</option>
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={pending.audience}
+                  onChange={(e) =>
+                    setPending({ ...pending, audience: e.target.value as InvAudience })
+                  }
+                  className={inputCls}
+                  aria-label="Who it is for"
+                >
+                  {AUDIENCE_OPTIONS.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <input
                   value={pending.brand}
@@ -461,6 +552,42 @@ export default function InventoryScanner() {
                   ✕
                 </button>
               </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <select
+                  value={item.category}
+                  onChange={(e) =>
+                    updateItem(idx, { category: e.target.value as InvCategory | '' })
+                  }
+                  className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
+                  aria-label={`Category for ${item.name}`}
+                >
+                  <option value="">Category — choose…</option>
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={item.audience}
+                  onChange={(e) =>
+                    updateItem(idx, { audience: e.target.value as InvAudience })
+                  }
+                  className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
+                  aria-label={`Who ${item.name} is for`}
+                >
+                  {AUDIENCE_OPTIONS.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {item.category === '' && (
+                <p className="mt-2 text-xs font-medium text-amber-600 dark:text-amber-400">
+                  Pick a category above — without one, this item can&apos;t go on the website yet.
+                </p>
+              )}
               <div className="mt-3 flex items-center gap-4">
                 <div className="flex items-center gap-2">
                   <button

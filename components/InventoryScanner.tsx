@@ -163,6 +163,29 @@ export default function InventoryScanner() {
   const controlsRef = useRef<IScannerControls | null>(null);
   const loadedRef = useRef(false);
 
+  // --- Scan & Go session state (continuous scanning, Sam's Club style) ---
+  // The camera stays open across items: a code already in the list adds
+  // +1 instantly; a new code joins a review queue (looked up in the
+  // background) and is detailed once, when she stops. Refs mirror the
+  // state because the decode callback is registered once at start and
+  // would otherwise see stale closures.
+  const [reviewQueue, setReviewQueue] = useState<string[]>([]);
+  const [sessionAdded, setSessionAdded] = useState(0);
+  const [flash, setFlash] = useState(false);
+  const itemsRef = useRef<InvItem[]>([]);
+  const queueRef = useRef<string[]>([]);
+  const lookupCacheRef = useRef(
+    new Map<
+      string,
+      { name: string; brand: string; size: string; category: InvCategory | '' } | null
+    >(),
+  );
+  const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
   // Load the saved list once, then persist every change. localStorage is a
   // client-only external store: reading it after mount (not during render)
   // is deliberate, so the prerendered page and first client render agree.
@@ -205,23 +228,17 @@ export default function InventoryScanner() {
     controlsRef.current?.stop();
     controlsRef.current = null;
     setScanning(false);
+    // Scan & Go: stopping the camera opens the review queue, one new
+    // item at a time, until every scanned code has its details.
+    if (queueRef.current.length > 0) void advanceReview();
   };
 
   useEffect(() => () => controlsRef.current?.stop(), []);
 
-  const handleCode = async (code: string) => {
-    const existing = items.findIndex((i) => i.barcode && i.barcode === code);
-    if (existing >= 0) {
-      setItems((prev) =>
-        prev.map((it, i) => (i === existing ? { ...it, qty: it.qty + 1 } : it)),
-      );
-      setStatus(`Already in the list — added one more: ${items[existing].name}`);
-      return;
-    }
-    setBusy(true);
-    setStatus('Looking up the barcode…');
-    const found = await lookupBarcode(code);
-    setBusy(false);
+  const openPendingFor = (
+    code: string,
+    found: { name: string; brand: string; size: string; category: InvCategory | '' } | null,
+  ) => {
     setPending({
       barcode: code,
       name: found?.name ?? '',
@@ -237,6 +254,80 @@ export default function InventoryScanner() {
         ? 'Found it — check the details, add the price, then save.'
         : 'Barcode not recognized — type the product name in, then save.',
     );
+  };
+
+  const handleCode = async (code: string) => {
+    const existing = items.findIndex((i) => i.barcode && i.barcode === code);
+    if (existing >= 0) {
+      setItems((prev) =>
+        prev.map((it, i) => (i === existing ? { ...it, qty: it.qty + 1 } : it)),
+      );
+      setStatus(`Already in the list — added one more: ${items[existing].name}`);
+      return;
+    }
+    setBusy(true);
+    setStatus('Looking up the barcode…');
+    const found = await lookupBarcode(code);
+    setBusy(false);
+    openPendingFor(code, found);
+  };
+
+  const dropFromQueue = (code: string) => {
+    queueRef.current = queueRef.current.filter((c) => c !== code);
+    setReviewQueue(queueRef.current);
+    lookupCacheRef.current.delete(code);
+  };
+
+  /** Open the detail form for the next queued code, if any. */
+  const advanceReview = async () => {
+    const code = queueRef.current[0];
+    if (!code) return;
+    let found = lookupCacheRef.current.get(code);
+    if (found === undefined) {
+      setBusy(true);
+      setStatus('Looking up the barcode…');
+      found = await lookupBarcode(code);
+      lookupCacheRef.current.set(code, found);
+      setBusy(false);
+    }
+    openPendingFor(code, found ?? null);
+  };
+
+  /**
+   * One decoded code during continuous scanning. The camera never
+   * stops: known items add instantly, new codes queue for review, and
+   * the same code re-read across consecutive frames is debounced so a
+   * slow pass over one box doesn't add five of it.
+   */
+  const onScan = (code: string) => {
+    const now = Date.now();
+    if (lastScanRef.current.code === code && now - lastScanRef.current.at < 2000) return;
+    lastScanRef.current = { code, at: now };
+    beep();
+    try {
+      navigator.vibrate?.(60);
+    } catch {
+      // vibration is a nicety, not a requirement
+    }
+    setFlash(true);
+    setTimeout(() => setFlash(false), 180);
+    setSessionAdded((n) => n + 1);
+    const existing = itemsRef.current.find((i) => i.barcode && i.barcode === code);
+    if (existing) {
+      setItems((prev) =>
+        prev.map((it) => (it.barcode === code ? { ...it, qty: it.qty + 1 } : it)),
+      );
+      setStatus(`Added one more: ${existing.name || code}`);
+      return;
+    }
+    if (queueRef.current.includes(code)) {
+      setStatus('Already scanned — it is waiting in the review list.');
+      return;
+    }
+    queueRef.current = [...queueRef.current, code];
+    setReviewQueue(queueRef.current);
+    setStatus(`Scanned ${code} — new item; you'll review it when you stop.`);
+    void lookupBarcode(code).then((found) => lookupCacheRef.current.set(code, found));
   };
 
   /**
@@ -283,16 +374,14 @@ export default function InventoryScanner() {
       const onResult = (
         result: { getText: () => string } | undefined,
         _error: unknown,
-        c: IScannerControls,
+        _c: IScannerControls,
       ) => {
-        if (result) {
-          c.stop();
-          controlsRef.current = null;
-          setScanning(false);
-          beep();
-          void handleCode(result.getText());
-        }
+        // Continuous mode: never stop on a read — onScan decides what
+        // the code means (instant add vs. review queue).
+        if (result) onScan(result.getText());
       };
+      setSessionAdded(0);
+      lastScanRef.current = { code: '', at: 0 };
       setScanning(true);
       let controls: IScannerControls;
       try {
@@ -354,6 +443,12 @@ export default function InventoryScanner() {
     ]);
     setStatus(`Saved: ${pending.name.trim()}`);
     setPending(null);
+    // If this item came from the Scan & Go review queue, move straight
+    // to the next queued code.
+    if (pending.barcode && queueRef.current.includes(pending.barcode)) {
+      dropFromQueue(pending.barcode);
+      void advanceReview();
+    }
   };
 
   const updateItem = (idx: number, patch: Partial<InvItem>) =>
@@ -397,22 +492,36 @@ export default function InventoryScanner() {
           {/* Always mounted so videoRef is valid before the camera starts;
               hidden while idle. */}
           <div className={scanning ? '' : 'hidden'}>
-            <video
-              ref={videoRef}
-              className="aspect-[4/3] w-full rounded-2xl bg-black object-cover"
-              muted
-              playsInline
-            />
+            <div className="relative">
+              <video
+                ref={videoRef}
+                className="aspect-[4/3] w-full rounded-2xl bg-black object-cover"
+                muted
+                playsInline
+              />
+              {/* Viewfinder frame + success flash, Scan & Go style. */}
+              <div className="pointer-events-none absolute inset-x-10 inset-y-8 rounded-2xl border-2 border-white/70" />
+              {flash && (
+                <div className="pointer-events-none absolute inset-0 rounded-2xl bg-emerald-400/30" />
+              )}
+            </div>
             <p className="mt-3 text-center text-sm text-stone-500 dark:text-stone-400">
-              Point the camera at the barcode — hold the box flat, 4–6 inches
-              away, and tilt shiny wrappers slightly so they don&apos;t reflect
-              the light.
+              Point the camera at each barcode and keep going — it beeps and
+              adds as you scan. Hold boxes flat, 4–6 inches away, and tilt
+              shiny wrappers slightly so they don&apos;t reflect the light.
+            </p>
+            <p className="mt-2 text-center text-sm font-semibold text-stone-700 dark:text-stone-200">
+              Scanned this session: {sessionAdded}
+              {reviewQueue.length > 0 &&
+                ` · ${reviewQueue.length} new item${reviewQueue.length > 1 ? 's' : ''} to review`}
             </p>
             <button
               onClick={stopScanner}
               className="mt-3 w-full rounded-full border border-stone-300 py-3 text-sm font-semibold text-stone-700 dark:border-stone-700 dark:text-stone-200"
             >
-              Stop camera
+              {reviewQueue.length > 0
+                ? `Stop & review ${reviewQueue.length} new item${reviewQueue.length > 1 ? 's' : ''}`
+                : 'Stop camera'}
             </button>
           </div>
           {!scanning && (
@@ -583,7 +692,16 @@ export default function InventoryScanner() {
                   Save to inventory
                 </button>
                 <button
-                  onClick={() => setPending(null)}
+                  onClick={() => {
+                    const code = pending.barcode;
+                    setPending(null);
+                    if (code && queueRef.current.includes(code)) {
+                      // Skipping a queued item: drop it and move to the next.
+                      dropFromQueue(code);
+                      setStatus('Skipped — not added to the list.');
+                      void advanceReview();
+                    }
+                  }}
                   className="rounded-full border border-stone-300 px-5 text-sm font-semibold text-stone-600 dark:border-stone-700 dark:text-stone-300"
                 >
                   Cancel

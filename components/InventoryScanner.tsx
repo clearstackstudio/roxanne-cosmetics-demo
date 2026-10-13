@@ -216,23 +216,48 @@ export default function InventoryScanner() {
   const startScanner = async () => {
     setStatus(null);
     setPending(null);
+    // The <video> element is always mounted (hidden while idle), so the
+    // ref is valid here. The previous version rendered it only while
+    // `scanning` was true and read the ref synchronously right after
+    // setScanning(true) — before React re-rendered — so the reader got
+    // no video element and the preview stayed black: scanning never
+    // really started. Fixed 2026-10-12.
+    const video = videoRef.current;
+    if (!video) {
+      setStatus('Scanner is not ready — reload the page and try again.');
+      return;
+    }
     try {
       const { BrowserMultiFormatReader } = await import('@zxing/browser');
       const reader = new BrowserMultiFormatReader();
+      const onResult = (
+        result: { getText: () => string } | undefined,
+        _error: unknown,
+        c: IScannerControls,
+      ) => {
+        if (result) {
+          c.stop();
+          controlsRef.current = null;
+          setScanning(false);
+          beep();
+          void handleCode(result.getText());
+        }
+      };
       setScanning(true);
-      const controls = await reader.decodeFromVideoDevice(
-        undefined,
-        videoRef.current ?? undefined,
-        (result, _error, c) => {
-          if (result) {
-            c.stop();
-            controlsRef.current = null;
-            setScanning(false);
-            beep();
-            void handleCode(result.getText());
-          }
-        },
-      );
+      let controls: IScannerControls;
+      try {
+        // Rear camera explicitly — with no constraint, phones may open
+        // the front (selfie) camera, which is useless for barcodes.
+        controls = await reader.decodeFromConstraints(
+          { video: { facingMode: 'environment' }, audio: false },
+          video,
+          onResult,
+        );
+      } catch {
+        // A device that refuses the rear-camera constraint (e.g. a
+        // single-webcam laptop) falls back to any available camera.
+        controls = await reader.decodeFromVideoDevice(undefined, video, onResult);
+      }
       controlsRef.current = controls;
     } catch {
       setScanning(false);
@@ -309,25 +334,26 @@ export default function InventoryScanner() {
       {/* Scanner */}
       <div className="overflow-hidden rounded-3xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
         <div className="p-4">
-          {scanning ? (
-            <>
-              <video
-                ref={videoRef}
-                className="aspect-[4/3] w-full rounded-2xl bg-black object-cover"
-                muted
-                playsInline
-              />
-              <p className="mt-3 text-center text-sm text-stone-500 dark:text-stone-400">
-                Point the camera at a barcode…
-              </p>
-              <button
-                onClick={stopScanner}
-                className="mt-3 w-full rounded-full border border-stone-300 py-3 text-sm font-semibold text-stone-700 dark:border-stone-700 dark:text-stone-200"
-              >
-                Stop camera
-              </button>
-            </>
-          ) : (
+          {/* Always mounted so videoRef is valid before the camera starts;
+              hidden while idle. */}
+          <div className={scanning ? '' : 'hidden'}>
+            <video
+              ref={videoRef}
+              className="aspect-[4/3] w-full rounded-2xl bg-black object-cover"
+              muted
+              playsInline
+            />
+            <p className="mt-3 text-center text-sm text-stone-500 dark:text-stone-400">
+              Point the camera at a barcode…
+            </p>
+            <button
+              onClick={stopScanner}
+              className="mt-3 w-full rounded-full border border-stone-300 py-3 text-sm font-semibold text-stone-700 dark:border-stone-700 dark:text-stone-200"
+            >
+              Stop camera
+            </button>
+          </div>
+          {!scanning && (
             <button
               onClick={() => void startScanner()}
               disabled={busy}

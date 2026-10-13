@@ -7,6 +7,8 @@ type InvCategory = 'fragrance' | 'skincare' | 'makeup';
 type InvAudience = 'women' | 'men' | 'unisex';
 
 interface InvItem {
+  /** Database row id — present when the item lives in the inventory DB. */
+  id?: number;
   barcode: string; // '' when the item has no barcode
   name: string;
   brand: string;
@@ -19,6 +21,20 @@ interface InvItem {
   audience: InvAudience;
 }
 
+interface PriceHint {
+  merchant: string;
+  price: number;
+}
+
+/** What a barcode lookup returns: identity + online price suggestions. */
+interface LookupHit {
+  name: string;
+  brand: string;
+  size: string;
+  category: InvCategory | '';
+  priceHints: PriceHint[];
+}
+
 interface PendingItem {
   barcode: string;
   name: string;
@@ -28,6 +44,7 @@ interface PendingItem {
   qty: number;
   category: InvCategory | '';
   audience: InvAudience;
+  priceHints: PriceHint[];
 }
 
 const CATEGORY_OPTIONS: { id: InvCategory; label: string }[] = [
@@ -57,11 +74,35 @@ function guessCategory(p: Record<string, unknown>): InvCategory | '' {
   return '';
 }
 
-async function lookupBarcode(
-  code: string,
-): Promise<{ name: string; brand: string; size: string; category: InvCategory | '' } | null> {
-  // Open Beauty Facts first (cosmetics), Open Food Facts as a fallback —
-  // both are free, keyless, and CORS-friendly.
+async function lookupBarcode(code: string): Promise<LookupHit | null> {
+  // Primary path: the site's own lookup API — identity from Open Beauty
+  // Facts / Open Food Facts PLUS online price suggestions (UPCitemdb).
+  try {
+    const res = await fetch(`/api/lookup/${encodeURIComponent(code)}`);
+    if (res.ok) {
+      const j = (await res.json()) as {
+        found?: boolean;
+        name?: string;
+        brand?: string;
+        size?: string;
+        category?: InvCategory | '';
+        priceHints?: PriceHint[];
+      };
+      if (j.found) {
+        return {
+          name: j.name ?? '',
+          brand: j.brand ?? '',
+          size: j.size ?? '',
+          category: j.category ?? '',
+          priceHints: Array.isArray(j.priceHints) ? j.priceHints : [],
+        };
+      }
+    }
+  } catch {
+    // fall through to the direct lookup below
+  }
+  // Fallback: query the open databases directly (identity only, no
+  // prices) so lookups still work even if the API route is down.
   const urls = [
     `https://world.openbeautyfacts.org/api/v2/product/${encodeURIComponent(code)}.json`,
     `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`,
@@ -79,6 +120,7 @@ async function lookupBarcode(
             typeof p.brands === 'string' ? p.brands.split(',')[0].trim() : '',
           size: typeof p.quantity === 'string' ? p.quantity : '',
           category: guessCategory(p as Record<string, unknown>),
+          priceHints: [],
         };
       }
     } catch {
@@ -86,6 +128,20 @@ async function lookupBarcode(
     }
   }
   return null;
+}
+
+function normalizeItem(i: Partial<InvItem>): InvItem {
+  return {
+    id: i.id,
+    barcode: i.barcode ?? '',
+    name: i.name ?? '',
+    brand: i.brand ?? '',
+    size: i.size ?? '',
+    price: i.price ?? null,
+    qty: i.qty ?? 1,
+    category: i.category ?? '',
+    audience: i.audience ?? 'unisex',
+  };
 }
 
 function beep() {
@@ -150,6 +206,8 @@ function download(filename: string, content: string, type: string) {
 const inputCls =
   'w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100';
 
+type StoreMode = 'checking' | 'db' | 'local' | 'locked';
+
 export default function InventoryScanner() {
   const [items, setItems] = useState<InvItem[]>([]);
   const [pending, setPending] = useState<PendingItem | null>(null);
@@ -157,6 +215,11 @@ export default function InventoryScanner() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [manualCode, setManualCode] = useState('');
+  // Where the inventory lives: the shop database ('db'), this phone
+  // only ('local' — fallback until the database is connected), the
+  // passcode gate ('locked'), or still finding out ('checking').
+  const [mode, setMode] = useState<StoreMode>('checking');
+  const [passcode, setPasscode] = useState('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const photoRef = useRef<HTMLInputElement | null>(null);
@@ -174,55 +237,174 @@ export default function InventoryScanner() {
   const [flash, setFlash] = useState(false);
   const itemsRef = useRef<InvItem[]>([]);
   const queueRef = useRef<string[]>([]);
-  const lookupCacheRef = useRef(
-    new Map<
-      string,
-      { name: string; brand: string; size: string; category: InvCategory | '' } | null
-    >(),
-  );
+  const lookupCacheRef = useRef(new Map<string, LookupHit | null>());
   const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
 
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
 
-  // Load the saved list once, then persist every change. localStorage is a
-  // client-only external store: reading it after mount (not during render)
-  // is deliberate, so the prerendered page and first client render agree.
+  // Load the inventory once, after mount (client-only stores must not be
+  // read during render, so the prerendered page and first client render
+  // agree). The database is the source of truth; localStorage is the
+  // fallback until the database is connected, and its contents are
+  // offered for one-time import on the first database load.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from localStorage after mount (see comment above)
-      if (raw) {
-        // Normalize lists saved before category/audience existed.
-        const parsed = JSON.parse(raw) as Partial<InvItem>[];
-        setItems(
-          parsed.map((i) => ({
-            barcode: i.barcode ?? '',
-            name: i.name ?? '',
-            brand: i.brand ?? '',
-            size: i.size ?? '',
-            price: i.price ?? null,
-            qty: i.qty ?? 1,
-            category: i.category ?? '',
-            audience: i.audience ?? 'unisex',
-          })),
-        );
+    let cancelled = false;
+    const loadLocal = (): InvItem[] => {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return [];
+        return (JSON.parse(raw) as Partial<InvItem>[]).map(normalizeItem);
+      } catch {
+        return [];
       }
-    } catch {
-      // corrupted storage — start fresh
-    }
-    loadedRef.current = true;
+    };
+    (async () => {
+      try {
+        const res = await fetch('/api/inventory');
+        if (cancelled) return;
+        if (res.status === 401) {
+          setMode('locked');
+          loadedRef.current = true;
+          return;
+        }
+        if (!res.ok) throw new Error('inventory api unavailable');
+        const j = (await res.json()) as { items: Partial<InvItem>[] };
+        let dbItems = j.items.map(normalizeItem);
+        // One-time bridge: phone-only items scanned before the database
+        // existed are uploaded once, then the phone copy is retired.
+        const localItems = loadLocal();
+        if (localItems.length > 0) {
+          for (const li of localItems) {
+            try {
+              const r = await fetch('/api/inventory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item: li }),
+              });
+              if (r.ok) {
+                const saved = (await r.json()) as { item: Partial<InvItem> };
+                dbItems = [
+                  normalizeItem(saved.item),
+                  ...dbItems.filter((d) => d.id !== saved.item.id),
+                ];
+              }
+            } catch {
+              // leave the phone copy in place; import retries next load
+            }
+          }
+          const stillLocal = loadLocal();
+          const allInDb = localItems.every((li) =>
+            dbItems.some(
+              (d) => (li.barcode && d.barcode === li.barcode) || d.name === li.name,
+            ),
+          );
+          if (allInDb && stillLocal.length > 0) {
+            try {
+              localStorage.removeItem(LS_KEY);
+            } catch {
+              // nothing to clean
+            }
+            if (!cancelled) {
+              setStatus('Your phone inventory was moved into the shop database.');
+            }
+          }
+        }
+        if (cancelled) return;
+        setItems(dbItems);
+        setMode('db');
+        loadedRef.current = true;
+      } catch {
+        if (cancelled) return;
+        setItems(loadLocal());
+        setMode('local');
+        loadedRef.current = true;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Phone-only mode persists every change locally (original behavior).
   useEffect(() => {
-    if (!loadedRef.current) return;
+    if (!loadedRef.current || mode !== 'local') return;
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(items));
     } catch {
       // storage full/blocked — list still works for this session
     }
-  }, [items]);
+  }, [items, mode]);
+
+  const unlock = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/inventory-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode }),
+      });
+      if (!res.ok) {
+        setStatus('That passcode did not work — check it and try again.');
+        return;
+      }
+      setPasscode('');
+      // Cookie is set; reload from the database.
+      const list = await fetch('/api/inventory');
+      if (list.ok) {
+        const j = (await list.json()) as { items: Partial<InvItem>[] };
+        setItems(j.items.map(normalizeItem));
+        setMode('db');
+        setStatus('Unlocked — inventory is saving to the shop database.');
+      } else {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (raw) {
+            setItems((JSON.parse(raw) as Partial<InvItem>[]).map(normalizeItem));
+          }
+        } catch {
+          // no phone copy — start empty
+        }
+        setMode('local');
+        setStatus('Unlocked, but the database is not connected yet — saving to this phone only.');
+      }
+    } catch {
+      setStatus('Could not unlock — check the connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Debounced database save for in-list edits (qty, price, category…).
+  // Fires 600ms after the last change and sends the item's latest
+  // state, so rapid edits collapse into one write of final values.
+  const patchTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const scheduleSave = (id: number) => {
+    if (mode !== 'db') return;
+    const timers = patchTimers.current;
+    const old = timers.get(id);
+    if (old) clearTimeout(old);
+    timers.set(
+      id,
+      setTimeout(() => {
+        timers.delete(id);
+        const item = itemsRef.current.find((i) => i.id === id);
+        if (!item) return;
+        void fetch('/api/inventory', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, patch: item }),
+        }).then((r) => {
+          if (!r.ok) {
+            setStatus(
+              'A change could not be saved to the database — check the connection, then re-enter it.',
+            );
+          }
+        });
+      }, 600),
+    );
+  };
 
   const stopScanner = () => {
     controlsRef.current?.stop();
@@ -235,10 +417,7 @@ export default function InventoryScanner() {
 
   useEffect(() => () => controlsRef.current?.stop(), []);
 
-  const openPendingFor = (
-    code: string,
-    found: { name: string; brand: string; size: string; category: InvCategory | '' } | null,
-  ) => {
+  const openPendingFor = (code: string, found: LookupHit | null) => {
     setPending({
       barcode: code,
       name: found?.name ?? '',
@@ -248,6 +427,7 @@ export default function InventoryScanner() {
       qty: 1,
       category: found?.category ?? '',
       audience: 'unisex',
+      priceHints: found?.priceHints ?? [],
     });
     setStatus(
       found
@@ -259,9 +439,7 @@ export default function InventoryScanner() {
   const handleCode = async (code: string) => {
     const existing = items.findIndex((i) => i.barcode && i.barcode === code);
     if (existing >= 0) {
-      setItems((prev) =>
-        prev.map((it, i) => (i === existing ? { ...it, qty: it.qty + 1 } : it)),
-      );
+      updateItem(existing, { qty: items[existing].qty + 1 });
       setStatus(`Already in the list — added one more: ${items[existing].name}`);
       return;
     }
@@ -300,6 +478,7 @@ export default function InventoryScanner() {
    * slow pass over one box doesn't add five of it.
    */
   const onScan = (code: string) => {
+    // eslint-disable-next-line react-hooks/purity -- decode callback (not render); wall-clock time is the debounce source
     const now = Date.now();
     if (lastScanRef.current.code === code && now - lastScanRef.current.at < 2000) return;
     lastScanRef.current = { code, at: now };
@@ -312,11 +491,12 @@ export default function InventoryScanner() {
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setSessionAdded((n) => n + 1);
-    const existing = itemsRef.current.find((i) => i.barcode && i.barcode === code);
-    if (existing) {
-      setItems((prev) =>
-        prev.map((it) => (it.barcode === code ? { ...it, qty: it.qty + 1 } : it)),
-      );
+    const existingIdx = itemsRef.current.findIndex(
+      (i) => i.barcode && i.barcode === code,
+    );
+    if (existingIdx >= 0) {
+      const existing = itemsRef.current[existingIdx];
+      updateItem(existingIdx, { qty: existing.qty + 1 });
       setStatus(`Added one more: ${existing.name || code}`);
       return;
     }
@@ -416,7 +596,15 @@ export default function InventoryScanner() {
     }
   };
 
-  const savePending = () => {
+  /** After a save: if the item came from the review queue, open the next. */
+  const afterSave = (barcode: string) => {
+    if (barcode && queueRef.current.includes(barcode)) {
+      dropFromQueue(barcode);
+      void advanceReview();
+    }
+  };
+
+  const savePending = async () => {
     if (!pending) return;
     if (!pending.name.trim()) {
       setStatus('Give the product a name before saving.');
@@ -428,34 +616,71 @@ export default function InventoryScanner() {
     }
     const price =
       pending.price.trim() === '' ? null : Number.parseFloat(pending.price);
-    setItems((prev) => [
-      {
-        barcode: pending.barcode,
-        name: pending.name.trim(),
-        brand: pending.brand.trim(),
-        size: pending.size.trim(),
-        price: price !== null && Number.isFinite(price) ? price : null,
-        qty: Math.max(1, Math.floor(pending.qty) || 1),
-        category: pending.category,
-        audience: pending.audience,
-      },
-      ...prev,
-    ]);
-    setStatus(`Saved: ${pending.name.trim()}`);
-    setPending(null);
-    // If this item came from the Scan & Go review queue, move straight
-    // to the next queued code.
-    if (pending.barcode && queueRef.current.includes(pending.barcode)) {
-      dropFromQueue(pending.barcode);
-      void advanceReview();
+    const newItem: InvItem = {
+      barcode: pending.barcode,
+      name: pending.name.trim(),
+      brand: pending.brand.trim(),
+      size: pending.size.trim(),
+      price: price !== null && Number.isFinite(price) ? price : null,
+      qty: Math.max(1, Math.floor(pending.qty) || 1),
+      category: pending.category,
+      audience: pending.audience,
+    };
+    if (mode === 'db') {
+      setBusy(true);
+      try {
+        const res = await fetch('/api/inventory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item: newItem }),
+        });
+        if (!res.ok) throw new Error('save failed');
+        const saved = normalizeItem(
+          ((await res.json()) as { item: Partial<InvItem> }).item,
+        );
+        setItems((prev) => [
+          saved,
+          ...prev.filter((i) => i.id !== saved.id),
+        ]);
+        setStatus(`Saved: ${saved.name}`);
+        setPending(null);
+        afterSave(saved.barcode);
+      } catch {
+        setStatus(
+          'Could not save to the database — check the connection and tap Save again. Nothing was lost; the form is still filled in.',
+        );
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
+    setItems((prev) => [newItem, ...prev]);
+    setStatus(`Saved: ${newItem.name}`);
+    setPending(null);
+    afterSave(newItem.barcode);
   };
 
-  const updateItem = (idx: number, patch: Partial<InvItem>) =>
+  const updateItem = (idx: number, patch: Partial<InvItem>) => {
+    const target = items[idx];
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+    if (target?.id) scheduleSave(target.id);
+  };
 
-  const removeItem = (idx: number) =>
+  const removeItem = (idx: number) => {
+    const target = items[idx];
     setItems((prev) => prev.filter((_, i) => i !== idx));
+    if (mode === 'db' && target?.id) {
+      void fetch('/api/inventory', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: target.id }),
+      }).then((r) => {
+        if (!r.ok) {
+          setStatus('That item could not be removed from the database — reload the page to check.');
+        }
+      });
+    }
+  };
 
   const totalUnits = items.reduce((s, i) => s + i.qty, 0);
   const totalValue = items.reduce((s, i) => s + (i.price ?? 0) * i.qty, 0);
@@ -483,6 +708,58 @@ export default function InventoryScanner() {
       JSON.stringify(items, null, 2),
       'application/json',
     );
+
+  if (mode === 'checking') {
+    return (
+      <div className="mt-6">
+        <p className="rounded-2xl border border-dashed border-stone-300 p-6 text-center text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">
+          Loading the inventory…
+        </p>
+      </div>
+    );
+  }
+
+  if (mode === 'locked') {
+    return (
+      <div className="mt-6">
+        <div className="overflow-hidden rounded-3xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
+          <p className="text-sm font-semibold text-stone-900 dark:text-stone-50">
+            Staff only
+          </p>
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+            The inventory lives in the shop database now. Enter the staff
+            passcode to open it — you only do this once on each phone.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <input
+              type="password"
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && passcode) void unlock();
+              }}
+              placeholder="Passcode"
+              autoComplete="off"
+              className={inputCls}
+              aria-label="Inventory passcode"
+            />
+            <button
+              onClick={() => void unlock()}
+              disabled={busy || !passcode}
+              className="shrink-0 rounded-xl bg-stone-900 px-5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-rose-600"
+            >
+              Unlock
+            </button>
+          </div>
+          {status && (
+            <p className="mt-3 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-800 dark:bg-stone-800 dark:text-rose-200">
+              {status}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-6">
@@ -582,7 +859,7 @@ export default function InventoryScanner() {
           <button
             onClick={() => {
               stopScanner();
-              setPending({ barcode: '', name: '', brand: '', size: '', price: '', qty: 1, category: '', audience: 'unisex' });
+              setPending({ barcode: '', name: '', brand: '', size: '', price: '', qty: 1, category: '', audience: 'unisex', priceHints: [] });
               setStatus('Adding an item with no barcode — fill in the name.');
             }}
             className="mt-2 text-sm font-medium text-rose-600 dark:text-rose-400"
@@ -684,9 +961,29 @@ export default function InventoryScanner() {
                   </button>
                 </div>
               </div>
+              {pending.priceHints.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-stone-500 dark:text-stone-400">
+                    Selling online at — tap one to use it as the price:
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {pending.priceHints.map((h) => (
+                      <button
+                        key={h.merchant}
+                        onClick={() =>
+                          setPending({ ...pending, price: h.price.toFixed(2) })
+                        }
+                        className="rounded-full border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:border-stone-700 dark:text-stone-200"
+                      >
+                        ${h.price.toFixed(2)} · {h.merchant}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2">
                 <button
-                  onClick={savePending}
+                  onClick={() => void savePending()}
                   className="flex-1 rounded-full bg-stone-900 py-3 text-sm font-semibold text-white hover:bg-stone-700 dark:bg-rose-600 dark:hover:bg-rose-500"
                 >
                   Save to inventory
@@ -711,6 +1008,13 @@ export default function InventoryScanner() {
           </div>
         )}
       </div>
+
+      {mode === 'local' && (
+        <p className="mt-6 rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:bg-stone-800 dark:text-amber-200">
+          Saving to this phone only — the shop database isn&apos;t connected
+          yet, so this list doesn&apos;t appear anywhere else.
+        </p>
+      )}
 
       {/* Summary + export */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -739,7 +1043,21 @@ export default function InventoryScanner() {
             </button>
             <button
               onClick={() => {
-                if (window.confirm('Clear the whole inventory list on this phone?')) {
+                if (!window.confirm('Clear the whole inventory list?')) return;
+                if (mode === 'db') {
+                  void fetch('/api/inventory', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ all: true }),
+                  }).then((r) => {
+                    if (r.ok) {
+                      setItems([]);
+                      setStatus('Inventory cleared.');
+                    } else {
+                      setStatus('Could not clear the database list — try again.');
+                    }
+                  });
+                } else {
                   setItems([]);
                   setStatus('Inventory cleared.');
                 }
@@ -860,10 +1178,9 @@ export default function InventoryScanner() {
       )}
 
       <p className="mt-4 text-xs leading-relaxed text-stone-400 dark:text-stone-500">
-        The list lives in this phone&apos;s browser — it survives closing the page,
-        but use the same browser each time and export a copy when you finish a
-        session. Barcode names come from Open Beauty Facts / Open Food Facts;
-        anything unrecognized can be typed in by hand.
+        {mode === 'db'
+          ? 'This list is saved in the shop\u2019s inventory database — it is the same list on every phone or computer that unlocks this page. Product names and online price suggestions come from Open Beauty Facts / Open Food Facts / UPCitemdb; the price that counts is always the one entered here.'
+          : 'The list lives in this phone\u2019s browser — it survives closing the page, but use the same browser each time and export a copy when you finish a session. Barcode names come from Open Beauty Facts / Open Food Facts; anything unrecognized can be typed in by hand.'}
       </p>
     </div>
   );

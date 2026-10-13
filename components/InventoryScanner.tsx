@@ -110,6 +110,31 @@ function beep() {
   }
 }
 
+/**
+ * Build a ZXing reader tuned for retail product barcodes.
+ * TRY_HARDER plus a retail-only format list: perfume/cosmetics boxes
+ * carry small EAN/UPC codes, often under shiny cellophane — the default
+ * reader gave up on them (field report 2026-10-13: the camera preview
+ * worked, but a perfume-box barcode was never picked up).
+ */
+async function makeBarcodeReader() {
+  const { BrowserMultiFormatReader, BarcodeFormat } = await import('@zxing/browser');
+  const { DecodeHintType } = await import('@zxing/library');
+  const hints = new Map();
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.EAN_13,
+    BarcodeFormat.EAN_8,
+    BarcodeFormat.UPC_A,
+    BarcodeFormat.UPC_E,
+    BarcodeFormat.CODE_128,
+    BarcodeFormat.CODE_39,
+    BarcodeFormat.ITF,
+    BarcodeFormat.QR_CODE,
+  ]);
+  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 200 });
+}
+
 function download(filename: string, content: string, type: string) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -134,6 +159,7 @@ export default function InventoryScanner() {
   const [manualCode, setManualCode] = useState('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const photoRef = useRef<HTMLInputElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const loadedRef = useRef(false);
 
@@ -213,6 +239,31 @@ export default function InventoryScanner() {
     );
   };
 
+  /**
+   * Fallback for barcodes the live camera can't resolve (small codes on
+   * shiny perfume boxes): decode from a still photo instead. The phone's
+   * camera app gives full resolution plus tap-to-focus, which is exactly
+   * what those boxes need.
+   */
+  const scanPhoto = async (file: File) => {
+    setBusy(true);
+    setStatus('Reading the photo…');
+    const url = URL.createObjectURL(file);
+    try {
+      const reader = await makeBarcodeReader();
+      const result = await reader.decodeFromImageUrl(url);
+      beep();
+      await handleCode(result.getText());
+    } catch {
+      setStatus(
+        'No barcode found in that photo. Get closer so the barcode fills the picture, keep the box flat, and tilt it a little to dodge the glare — or type the number below.',
+      );
+    } finally {
+      URL.revokeObjectURL(url);
+      setBusy(false);
+    }
+  };
+
   const startScanner = async () => {
     setStatus(null);
     setPending(null);
@@ -228,8 +279,7 @@ export default function InventoryScanner() {
       return;
     }
     try {
-      const { BrowserMultiFormatReader } = await import('@zxing/browser');
-      const reader = new BrowserMultiFormatReader();
+      const reader = await makeBarcodeReader();
       const onResult = (
         result: { getText: () => string } | undefined,
         _error: unknown,
@@ -249,7 +299,17 @@ export default function InventoryScanner() {
         // Rear camera explicitly — with no constraint, phones may open
         // the front (selfie) camera, which is useless for barcodes.
         controls = await reader.decodeFromConstraints(
-          { video: { facingMode: 'environment' }, audio: false },
+          {
+            video: {
+              facingMode: 'environment',
+              // Ask for a high-resolution stream: small perfume-box
+              // barcodes are only a handful of pixels across at 480p,
+              // which is why the default stream never resolved them.
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+            audio: false,
+          },
           video,
           onResult,
         );
@@ -344,7 +404,9 @@ export default function InventoryScanner() {
               playsInline
             />
             <p className="mt-3 text-center text-sm text-stone-500 dark:text-stone-400">
-              Point the camera at a barcode…
+              Point the camera at the barcode — hold the box flat, 4–6 inches
+              away, and tilt shiny wrappers slightly so they don&apos;t reflect
+              the light.
             </p>
             <button
               onClick={stopScanner}
@@ -387,6 +449,27 @@ export default function InventoryScanner() {
               Look up
             </button>
           </div>
+          {/* Photo fallback for stubborn barcodes (small codes, shiny wrap) */}
+          <input
+            ref={photoRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            aria-label="Take a photo of a barcode"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) void scanPhoto(f);
+            }}
+          />
+          <button
+            onClick={() => photoRef.current?.click()}
+            disabled={busy}
+            className="mt-3 w-full rounded-full border border-stone-300 py-3 text-sm font-semibold text-stone-700 disabled:opacity-50 dark:border-stone-700 dark:text-stone-200"
+          >
+            📸 Barcode won&apos;t scan? Take a photo of it instead
+          </button>
           <button
             onClick={() => {
               stopScanner();

@@ -167,6 +167,20 @@ function beep() {
 }
 
 /**
+ * Scan-confirmation buzz: a short double pulse, long enough to feel
+ * through a phone case while boxes are flying. Android browsers honor
+ * the Vibration API; iOS Safari doesn't expose it at all — there the
+ * beep + screen flash carry the feedback.
+ */
+function buzz() {
+  try {
+    navigator.vibrate?.([70, 40, 70]);
+  } catch {
+    // vibration is a nicety, not a requirement
+  }
+}
+
+/**
  * Build a ZXing reader tuned for retail product barcodes.
  * TRY_HARDER plus a retail-only format list: perfume/cosmetics boxes
  * carry small EAN/UPC codes, often under shiny cellophane — the default
@@ -565,11 +579,7 @@ export default function InventoryScanner() {
     // list: stay silent, or the same box re-triggers every few seconds.
     if (existingIdx < 0 && dismissedRef.current.has(code)) return;
     beep();
-    try {
-      navigator.vibrate?.(60);
-    } catch {
-      // vibration is a nicety, not a requirement
-    }
+    buzz();
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setSessionAdded((n) => n + 1);
@@ -618,6 +628,7 @@ export default function InventoryScanner() {
         try {
           const result = await reader.decodeFromCanvas(canvas);
           beep();
+          buzz();
           await handleCode(result.getText());
           return;
         } catch {

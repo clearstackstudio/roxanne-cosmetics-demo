@@ -17,9 +17,9 @@ export default function InventoryPage() {
       </h1>
       <p className="mt-2 text-sm leading-relaxed text-stone-600 dark:text-stone-300">
         Scan each product&apos;s barcode to build the inventory list. The name and
-        brand fill in automatically when the barcode is recognized — just add the
-        price and how many you have. The list is saved on this phone as you go;
-        when you&apos;re done, export it and send the file to Bryant.
+        brand fill in automatically when the barcode is recognized — just check
+        them, add the price and how many you have, and tap save. Everything is
+        kept in the shop&apos;s inventory database as you go.
       </p>
       <InventoryScanner />
     </div>

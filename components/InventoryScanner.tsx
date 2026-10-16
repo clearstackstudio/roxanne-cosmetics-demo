@@ -228,21 +228,47 @@ export default function InventoryScanner() {
 
   // --- Scan & Go session state (continuous scanning, Sam's Club style) ---
   // The camera stays open across items: a code already in the list adds
-  // +1 instantly; a new code joins a review queue (looked up in the
-  // background) and is detailed once, when she stops. Refs mirror the
-  // state because the decode callback is registered once at start and
-  // would otherwise see stale closures.
+  // +1 instantly; a NEW code resolves on the spot — its lookup runs and
+  // the confirm card opens right there (camera view hides, decodes are
+  // gated) so she checks the suggested name/price and taps Save, then
+  // scanning resumes. Only a deliberate "Review later" (or a stop with
+  // deferred items pending) uses the review queue, which is worked
+  // through when the camera stops. Refs mirror the state because the
+  // decode callback is registered once at start and would otherwise see
+  // stale closures.
   const [reviewQueue, setReviewQueue] = useState<string[]>([]);
   const [sessionAdded, setSessionAdded] = useState(0);
+  const [sessionItems, setSessionItems] = useState<
+    { name: string; qty: number; price: number | null }[]
+  >([]);
   const [flash, setFlash] = useState(false);
   const itemsRef = useRef<InvItem[]>([]);
   const queueRef = useRef<string[]>([]);
+  const pendingRef = useRef<PendingItem | null>(null);
+  const dismissedRef = useRef(new Set<string>());
   const lookupCacheRef = useRef(new Map<string, LookupHit | null>());
   const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
 
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+
+  /** Record one scanned/saved item in the visible session list. */
+  const addSessionEntry = (name: string, qty: number, price: number | null) => {
+    setSessionItems((prev) => {
+      const idx = prev.findIndex((e) => e.name === name);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: next[idx].qty + qty };
+        return [next[idx], ...next.filter((_, i) => i !== idx)];
+      }
+      return [{ name, qty, price }, ...prev];
+    });
+  };
 
   // Load the inventory once, after mount (client-only stores must not be
   // read during render, so the prerendered page and first client render
@@ -410,9 +436,10 @@ export default function InventoryScanner() {
     controlsRef.current?.stop();
     controlsRef.current = null;
     setScanning(false);
-    // Scan & Go: stopping the camera opens the review queue, one new
-    // item at a time, until every scanned code has its details.
-    if (queueRef.current.length > 0) void advanceReview();
+    // Scan & Go: stopping the camera opens the review queue (only
+    // items she deferred with "Review later"), one at a time — unless
+    // a confirm card is already open.
+    if (!pendingRef.current && queueRef.current.length > 0) void advanceReview();
   };
 
   useEffect(() => () => controlsRef.current?.stop(), []);
@@ -473,15 +500,25 @@ export default function InventoryScanner() {
 
   /**
    * One decoded code during continuous scanning. The camera never
-   * stops: known items add instantly, new codes queue for review, and
-   * the same code re-read across consecutive frames is debounced so a
-   * slow pass over one box doesn't add five of it.
+   * stops: known items add instantly, a NEW code resolves inline (its
+   * lookup runs and the confirm card opens over the session — decodes
+   * are gated while the card is up), and the same code re-read across
+   * consecutive frames is debounced so a slow pass over one box
+   * doesn't add five of it.
    */
   const onScan = (code: string) => {
+    // A confirm card is open — hold all decodes until it's dealt with.
+    if (pendingRef.current) return;
     // eslint-disable-next-line react-hooks/purity -- decode callback (not render); wall-clock time is the debounce source
     const now = Date.now();
     if (lastScanRef.current.code === code && now - lastScanRef.current.at < 2000) return;
     lastScanRef.current = { code, at: now };
+    const existingIdx = itemsRef.current.findIndex(
+      (i) => i.barcode && i.barcode === code,
+    );
+    // Skipped or deferred earlier this session and still not in the
+    // list: stay silent, or the same box re-triggers every few seconds.
+    if (existingIdx < 0 && dismissedRef.current.has(code)) return;
     beep();
     try {
       navigator.vibrate?.(60);
@@ -491,12 +528,10 @@ export default function InventoryScanner() {
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setSessionAdded((n) => n + 1);
-    const existingIdx = itemsRef.current.findIndex(
-      (i) => i.barcode && i.barcode === code,
-    );
     if (existingIdx >= 0) {
       const existing = itemsRef.current[existingIdx];
       updateItem(existingIdx, { qty: existing.qty + 1 });
+      addSessionEntry(existing.name || code, 1, existing.price);
       setStatus(`Added one more: ${existing.name || code}`);
       return;
     }
@@ -504,10 +539,14 @@ export default function InventoryScanner() {
       setStatus('Already scanned — it is waiting in the review list.');
       return;
     }
-    queueRef.current = [...queueRef.current, code];
-    setReviewQueue(queueRef.current);
-    setStatus(`Scanned ${code} — new item; you'll review it when you stop.`);
-    void lookupBarcode(code).then((found) => lookupCacheRef.current.set(code, found));
+    // New item — Sam's Club style: resolve it right now. The lookup
+    // runs and the confirm card opens with whatever it found (or the
+    // type-it-in form when nothing recognizes the code).
+    setStatus('Looking up the barcode…');
+    void lookupBarcode(code).then((found) => {
+      lookupCacheRef.current.set(code, found);
+      openPendingFor(code, found);
+    });
   };
 
   /**
@@ -561,6 +600,8 @@ export default function InventoryScanner() {
         if (result) onScan(result.getText());
       };
       setSessionAdded(0);
+      setSessionItems([]);
+      dismissedRef.current = new Set<string>();
       lastScanRef.current = { code: '', at: 0 };
       setScanning(true);
       let controls: IScannerControls;
@@ -643,6 +684,8 @@ export default function InventoryScanner() {
           ...prev.filter((i) => i.id !== saved.id),
         ]);
         setStatus(`Saved: ${saved.name}`);
+        dismissedRef.current.delete(saved.barcode);
+        if (scanning) addSessionEntry(saved.name, saved.qty, saved.price);
         setPending(null);
         afterSave(saved.barcode);
       } catch {
@@ -656,6 +699,8 @@ export default function InventoryScanner() {
     }
     setItems((prev) => [newItem, ...prev]);
     setStatus(`Saved: ${newItem.name}`);
+    dismissedRef.current.delete(newItem.barcode);
+    if (scanning) addSessionEntry(newItem.name, newItem.qty, newItem.price);
     setPending(null);
     afterSave(newItem.barcode);
   };
@@ -768,7 +813,7 @@ export default function InventoryScanner() {
         <div className="p-4">
           {/* Always mounted so videoRef is valid before the camera starts;
               hidden while idle. */}
-          <div className={scanning ? '' : 'hidden'}>
+          <div className={scanning && !pending ? '' : 'hidden'}>
             <div className="relative">
               <video
                 ref={videoRef}
@@ -783,15 +828,46 @@ export default function InventoryScanner() {
               )}
             </div>
             <p className="mt-3 text-center text-sm text-stone-500 dark:text-stone-400">
-              Point the camera at each barcode and keep going — it beeps and
-              adds as you scan. Hold boxes flat, 4–6 inches away, and tilt
-              shiny wrappers slightly so they don&apos;t reflect the light.
+              Point the camera at each barcode and keep going — items already
+              in the list add instantly, and a new item pops up its details to
+              check and save. Hold boxes flat, 4–6 inches away, and tilt shiny
+              wrappers slightly so they don&apos;t reflect the light.
             </p>
             <p className="mt-2 text-center text-sm font-semibold text-stone-700 dark:text-stone-200">
               Scanned this session: {sessionAdded}
               {reviewQueue.length > 0 &&
                 ` · ${reviewQueue.length} new item${reviewQueue.length > 1 ? 's' : ''} to review`}
             </p>
+            {sessionItems.length > 0 && (
+              <div className="mt-3 rounded-2xl bg-stone-50 p-3 dark:bg-stone-800/60">
+                <ul className="space-y-1">
+                  {sessionItems.slice(0, 6).map((e) => (
+                    <li
+                      key={e.name}
+                      className="flex items-baseline justify-between gap-3 text-sm text-stone-700 dark:text-stone-200"
+                    >
+                      <span className="min-w-0 truncate">
+                        {e.name}{' '}
+                        <span className="text-stone-400">×{e.qty}</span>
+                      </span>
+                      <span className="shrink-0 font-medium">
+                        ${((e.price ?? 0) * e.qty).toFixed(2)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 border-t border-stone-200 pt-2 text-sm font-semibold text-stone-800 dark:border-stone-700 dark:text-stone-100">
+                  Session total: $
+                  {sessionItems
+                    .reduce((s, e) => s + (e.price ?? 0) * e.qty, 0)
+                    .toFixed(2)}
+                  <span className="font-normal text-stone-500 dark:text-stone-400">
+                    {' '}
+                    · {sessionItems.reduce((s, e) => s + e.qty, 0)} units
+                  </span>
+                </p>
+              </div>
+            )}
             <button
               onClick={stopScanner}
               className="mt-3 w-full rounded-full border border-stone-300 py-3 text-sm font-semibold text-stone-700 dark:border-stone-700 dark:text-stone-200"
@@ -988,6 +1064,23 @@ export default function InventoryScanner() {
                 >
                   Save to inventory
                 </button>
+                {scanning && pending.barcode && (
+                  <button
+                    onClick={() => {
+                      const code = pending.barcode;
+                      if (!queueRef.current.includes(code)) {
+                        queueRef.current = [...queueRef.current, code];
+                        setReviewQueue(queueRef.current);
+                      }
+                      dismissedRef.current.add(code);
+                      setPending(null);
+                      setStatus('Set aside — review it when you stop scanning.');
+                    }}
+                    className="rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-600 dark:border-stone-700 dark:text-stone-300"
+                  >
+                    Review later
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     const code = pending.barcode;
@@ -997,6 +1090,11 @@ export default function InventoryScanner() {
                       dropFromQueue(code);
                       setStatus('Skipped — not added to the list.');
                       void advanceReview();
+                    } else if (code && scanning) {
+                      // Skipped mid-scan: don't let the same box, still
+                      // sitting in front of the camera, reopen the card.
+                      dismissedRef.current.add(code);
+                      setStatus('Skipped — keep scanning.');
                     }
                   }}
                   className="rounded-full border border-stone-300 px-5 text-sm font-semibold text-stone-600 dark:border-stone-700 dark:text-stone-300"

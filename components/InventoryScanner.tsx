@@ -191,6 +191,38 @@ async function makeBarcodeReader() {
   return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 200 });
 }
 
+/**
+ * Draw a video frame or image onto a fresh canvas, rotated by `deg`
+ * and capped at `maxEdge` px on the long side. ZXing's 1D reader only
+ * scans horizontally: upright and upside-down barcodes decode as-is,
+ * but a sideways one (box turned on the shelf) is invisible until the
+ * image is turned upright — verified against the reader core with a
+ * real shop barcode at all four rotations (2026-10-15). Every rotated
+ * retry in the scanner goes through here.
+ */
+function drawRotated(
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  deg: 0 | 90 | 180 | 270,
+  maxEdge: number,
+): HTMLCanvasElement {
+  const scale = Math.min(1, maxEdge / Math.max(srcW, srcH));
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(srcH * scale));
+  const swap = deg === 90 || deg === 270;
+  const canvas = document.createElement('canvas');
+  canvas.width = swap ? h : w;
+  canvas.height = swap ? w : h;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((deg * Math.PI) / 180);
+    ctx.drawImage(source, -w / 2, -h / 2, w, h);
+  }
+  return canvas;
+}
+
 function download(filename: string, content: string, type: string) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -224,6 +256,9 @@ export default function InventoryScanner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const photoRef = useRef<HTMLInputElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
+  const sweepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sweepBusyRef = useRef(false);
+  const sweepReaderRef = useRef<Awaited<ReturnType<typeof makeBarcodeReader>> | null>(null);
   const loadedRef = useRef(false);
 
   // --- Scan & Go session state (continuous scanning, Sam's Club style) ---
@@ -435,6 +470,10 @@ export default function InventoryScanner() {
   const stopScanner = () => {
     controlsRef.current?.stop();
     controlsRef.current = null;
+    if (sweepTimerRef.current) {
+      clearInterval(sweepTimerRef.current);
+      sweepTimerRef.current = null;
+    }
     setScanning(false);
     // Scan & Go: stopping the camera opens the review queue (only
     // items she deferred with "Review later"), one at a time — unless
@@ -442,7 +481,13 @@ export default function InventoryScanner() {
     if (!pendingRef.current && queueRef.current.length > 0) void advanceReview();
   };
 
-  useEffect(() => () => controlsRef.current?.stop(), []);
+  useEffect(
+    () => () => {
+      controlsRef.current?.stop();
+      if (sweepTimerRef.current) clearInterval(sweepTimerRef.current);
+    },
+    [],
+  );
 
   const openPendingFor = (code: string, found: LookupHit | null) => {
     setPending({
@@ -553,17 +598,35 @@ export default function InventoryScanner() {
    * Fallback for barcodes the live camera can't resolve (small codes on
    * shiny perfume boxes): decode from a still photo instead. The phone's
    * camera app gives full resolution plus tap-to-focus, which is exactly
-   * what those boxes need.
+   * what those boxes need. The photo is tried at all four rotations, so
+   * a barcode photographed sideways decodes too.
    */
   const scanPhoto = async (file: File) => {
     setBusy(true);
     setStatus('Reading the photo…');
     const url = URL.createObjectURL(file);
     try {
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('image load failed'));
+        img.src = url;
+      });
       const reader = await makeBarcodeReader();
-      const result = await reader.decodeFromImageUrl(url);
-      beep();
-      await handleCode(result.getText());
+      for (const deg of [0, 90, 270, 180] as const) {
+        const canvas = drawRotated(img, img.naturalWidth, img.naturalHeight, deg, 2048);
+        try {
+          const result = await reader.decodeFromCanvas(canvas);
+          beep();
+          await handleCode(result.getText());
+          return;
+        } catch {
+          // nothing at this rotation — try the next
+        }
+      }
+      setStatus(
+        'No barcode found in that photo. Get closer so the barcode fills the picture, keep the box flat, and tilt it a little to dodge the glare — or type the number below.',
+      );
     } catch {
       setStatus(
         'No barcode found in that photo. Get closer so the barcode fills the picture, keep the box flat, and tilt it a little to dodge the glare — or type the number below.',
@@ -571,6 +634,42 @@ export default function InventoryScanner() {
     } finally {
       URL.revokeObjectURL(url);
       setBusy(false);
+    }
+  };
+
+  /**
+   * Any-direction sweep for the live camera. The continuous reader only
+   * scans horizontally, so while it works a few times a second this
+   * snapshots the current frame, turns it 90° and 270°, and tries
+   * again — a sideways barcode gets its chance without her having to
+   * rotate the box. Hits go through the same onScan path as a normal
+   * read (debounce, +1, confirm card), and the sweep stands down while
+   * a confirm card is open.
+   */
+  const sweepRotatedFrame = async () => {
+    if (sweepBusyRef.current || pendingRef.current) return;
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+    sweepBusyRef.current = true;
+    try {
+      if (!sweepReaderRef.current) {
+        sweepReaderRef.current = await makeBarcodeReader();
+      }
+      const reader = sweepReaderRef.current;
+      for (const deg of [90, 270] as const) {
+        const canvas = drawRotated(video, video.videoWidth, video.videoHeight, deg, 1280);
+        try {
+          const result = await reader.decodeFromCanvas(canvas);
+          onScan(result.getText());
+          break;
+        } catch {
+          // nothing readable at this angle — try the other
+        }
+      }
+    } catch {
+      // best-effort only — the main reader keeps running regardless
+    } finally {
+      sweepBusyRef.current = false;
     }
   };
 
@@ -629,6 +728,9 @@ export default function InventoryScanner() {
         controls = await reader.decodeFromVideoDevice(undefined, video, onResult);
       }
       controlsRef.current = controls;
+      // Start the any-direction sweep alongside the main reader.
+      if (sweepTimerRef.current) clearInterval(sweepTimerRef.current);
+      sweepTimerRef.current = setInterval(() => void sweepRotatedFrame(), 650);
     } catch {
       setScanning(false);
       setStatus(
@@ -830,7 +932,8 @@ export default function InventoryScanner() {
             <p className="mt-3 text-center text-sm text-stone-500 dark:text-stone-400">
               Point the camera at each barcode and keep going — items already
               in the list add instantly, and a new item pops up its details to
-              check and save. Hold boxes flat, 4–6 inches away, and tilt shiny
+              check and save. Barcodes can face any direction, sideways
+              included. Hold boxes flat, 4–6 inches away, and tilt shiny
               wrappers slightly so they don&apos;t reflect the light.
             </p>
             <p className="mt-2 text-center text-sm font-semibold text-stone-700 dark:text-stone-200">

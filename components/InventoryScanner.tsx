@@ -169,15 +169,43 @@ function beep() {
 /**
  * Scan-confirmation buzz: a short double pulse, long enough to feel
  * through a phone case while boxes are flying. Android browsers honor
- * the Vibration API; iOS Safari doesn't expose it at all — there the
- * beep + screen flash carry the feedback.
+ * the Vibration API directly. iOS Safari has no Vibration API at all,
+ * so on iPhone buzz() ALSO flips a hidden native switch control —
+ * iOS 17.4+ answers a switch toggle with a small haptic tick, the
+ * only scan feedback a web page can get out of an iPhone. Best
+ * effort: if an iOS build doesn't fire it, the beep + screen flash
+ * still confirm the scan.
  */
+let iosSwitchEl: HTMLInputElement | null = null;
+
+function iosHapticTick() {
+  try {
+    if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
+    if (!iosSwitchEl) {
+      const el = document.createElement('input');
+      el.type = 'checkbox';
+      el.setAttribute('switch', '');
+      el.setAttribute('aria-hidden', 'true');
+      el.tabIndex = -1;
+      // Rendered but invisible: display:none elements get no haptic.
+      el.style.cssText =
+        'position:fixed;bottom:0;right:0;width:12px;height:12px;opacity:0.01;pointer-events:none;';
+      document.body.appendChild(el);
+      iosSwitchEl = el;
+    }
+    iosSwitchEl.click();
+  } catch {
+    // best effort only — never break a scan over a buzz
+  }
+}
+
 function buzz() {
   try {
     navigator.vibrate?.([70, 40, 70]);
   } catch {
     // vibration is a nicety, not a requirement
   }
+  iosHapticTick();
 }
 
 /**

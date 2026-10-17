@@ -44,7 +44,8 @@ export async function POST(req: Request) {
     rows = (await sql`
       UPDATE inventory
       SET barcode = ${item.barcode}, name = ${item.name}, brand = ${item.brand},
-          size = ${item.size}, price = ${item.price}, qty = ${item.qty},
+          size = ${item.size}, price = ${item.price}, cost = ${item.cost},
+          vendor = ${item.vendor}, qty = ${item.qty},
           category = ${item.category}, audience = ${item.audience},
           updated_at = now()
       WHERE id = ${item.id}
@@ -52,21 +53,24 @@ export async function POST(req: Request) {
     `) as InventoryRow[];
   } else if (item.barcode) {
     rows = (await sql`
-      INSERT INTO inventory (barcode, name, brand, size, price, qty, category, audience)
+      INSERT INTO inventory (barcode, name, brand, size, price, cost, vendor, qty, category, audience)
       VALUES (${item.barcode}, ${item.name}, ${item.brand}, ${item.size},
-              ${item.price}, ${item.qty}, ${item.category}, ${item.audience})
+              ${item.price}, ${item.cost}, ${item.vendor}, ${item.qty},
+              ${item.category}, ${item.audience})
       ON CONFLICT (barcode) WHERE barcode <> ''
       DO UPDATE SET name = EXCLUDED.name, brand = EXCLUDED.brand,
                     size = EXCLUDED.size, price = EXCLUDED.price,
+                    cost = EXCLUDED.cost, vendor = EXCLUDED.vendor,
                     qty = EXCLUDED.qty, category = EXCLUDED.category,
                     audience = EXCLUDED.audience, updated_at = now()
       RETURNING *
     `) as InventoryRow[];
   } else {
     rows = (await sql`
-      INSERT INTO inventory (barcode, name, brand, size, price, qty, category, audience)
+      INSERT INTO inventory (barcode, name, brand, size, price, cost, vendor, qty, category, audience)
       VALUES ('', ${item.name}, ${item.brand}, ${item.size},
-              ${item.price}, ${item.qty}, ${item.category}, ${item.audience})
+              ${item.price}, ${item.cost}, ${item.vendor}, ${item.qty},
+              ${item.category}, ${item.audience})
       RETURNING *
     `) as InventoryRow[];
   }
@@ -95,7 +99,8 @@ export async function PATCH(req: Request) {
   const rows = (await sql`
     UPDATE inventory
     SET barcode = ${merged.barcode}, name = ${merged.name}, brand = ${merged.brand},
-        size = ${merged.size}, price = ${merged.price}, qty = ${merged.qty},
+        size = ${merged.size}, price = ${merged.price}, cost = ${merged.cost},
+        vendor = ${merged.vendor}, qty = ${merged.qty},
         category = ${merged.category}, audience = ${merged.audience},
         updated_at = now()
     WHERE id = ${id}

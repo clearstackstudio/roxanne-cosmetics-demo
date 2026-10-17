@@ -26,6 +26,8 @@ export interface InventoryRow {
   brand: string;
   size: string;
   price: string | null; // NUMERIC comes back as a string from pg
+  cost: string | null; // what the shop paid per unit (NUMERIC → string)
+  vendor: string; // who the shop buys it from
   qty: number;
   category: string;
   audience: string;
@@ -39,7 +41,9 @@ export interface InventoryItem {
   name: string;
   brand: string;
   size: string;
-  price: number | null;
+  price: number | null; // selling price
+  cost: number | null;
+  vendor: string;
   qty: number;
   category: string;
   audience: string;
@@ -53,6 +57,8 @@ export function rowToItem(r: InventoryRow): InventoryItem {
     brand: r.brand,
     size: r.size,
     price: r.price === null ? null : Number(r.price),
+    cost: r.cost === null || r.cost === undefined ? null : Number(r.cost),
+    vendor: r.vendor ?? '',
     qty: r.qty,
     category: r.category,
     audience: r.audience,
@@ -94,6 +100,14 @@ export function ensureTable(sql: Sql): Promise<void> {
       await sql`
         CREATE UNIQUE INDEX IF NOT EXISTS inventory_barcode_uniq
         ON inventory (barcode) WHERE barcode <> ''
+      `;
+      // 2026-10-16: the shop tracks just cost, selling price, qty and
+      // vendor per item — add the two fields the original table lacked.
+      await sql`
+        ALTER TABLE inventory ADD COLUMN IF NOT EXISTS cost NUMERIC(10, 2)
+      `;
+      await sql`
+        ALTER TABLE inventory ADD COLUMN IF NOT EXISTS vendor TEXT NOT NULL DEFAULT ''
       `;
     })();
     // If creation failed (e.g. transient), allow a retry next request.
@@ -168,11 +182,12 @@ export function cleanItem(input: unknown): Omit<InventoryItem, 'id'> & { id?: nu
   const o = (input ?? {}) as Record<string, unknown>;
   const str = (v: unknown, max: number) =>
     typeof v === 'string' ? v.trim().slice(0, max) : '';
-  const priceRaw = o.price;
-  const price =
-    typeof priceRaw === 'number' && Number.isFinite(priceRaw) && priceRaw >= 0
-      ? Math.round(priceRaw * 100) / 100
+  const money = (v: unknown) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0
+      ? Math.round(v * 100) / 100
       : null;
+  const price = money(o.price);
+  const cost = money(o.cost);
   const qtyRaw = typeof o.qty === 'number' ? Math.floor(o.qty) : 1;
   return {
     ...(typeof o.id === 'number' ? { id: o.id } : {}),
@@ -181,6 +196,8 @@ export function cleanItem(input: unknown): Omit<InventoryItem, 'id'> & { id?: nu
     brand: str(o.brand, 120),
     size: str(o.size, 80),
     price,
+    cost,
+    vendor: str(o.vendor, 120),
     qty: Math.max(1, Math.min(100000, qtyRaw || 1)),
     category: str(o.category, 32),
     audience: str(o.audience, 16) || 'unisex',

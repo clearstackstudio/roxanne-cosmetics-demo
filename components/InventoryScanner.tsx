@@ -13,9 +13,11 @@ interface InvItem {
   name: string;
   brand: string;
   size: string;
-  price: number | null;
+  price: number | null; // selling price
+  cost: number | null; // what the shop paid per unit
+  vendor: string; // who the shop buys it from
   qty: number;
-  /** Catalog category — '' until she picks one (required before export is importable). */
+  /** Kept from the barcode lookup for later website use — she is never asked for it. */
   category: InvCategory | '';
   /** Who it's sold for — drives the For Her / For Him views. */
   audience: InvAudience;
@@ -40,24 +42,14 @@ interface PendingItem {
   name: string;
   brand: string;
   size: string;
-  price: string;
+  price: string; // selling price, as typed
+  cost: string; // cost per unit, as typed
+  vendor: string;
   qty: number;
   category: InvCategory | '';
   audience: InvAudience;
   priceHints: PriceHint[];
 }
-
-const CATEGORY_OPTIONS: { id: InvCategory; label: string }[] = [
-  { id: 'fragrance', label: 'Fragrance (perfume / cologne)' },
-  { id: 'skincare', label: 'Skincare' },
-  { id: 'makeup', label: 'Makeup' },
-];
-
-const AUDIENCE_OPTIONS: { id: InvAudience; label: string }[] = [
-  { id: 'women', label: 'For Her' },
-  { id: 'men', label: 'For Him' },
-  { id: 'unisex', label: 'For Everyone' },
-];
 
 const LS_KEY = 'roxanne-inventory-v1';
 
@@ -138,6 +130,8 @@ function normalizeItem(i: Partial<InvItem>): InvItem {
     brand: i.brand ?? '',
     size: i.size ?? '',
     price: i.price ?? null,
+    cost: i.cost ?? null,
+    vendor: i.vendor ?? '',
     qty: i.qty ?? 1,
     category: i.category ?? '',
     audience: i.audience ?? 'unisex',
@@ -325,6 +319,9 @@ export default function InventoryScanner() {
   const dismissedRef = useRef(new Set<string>());
   const lookupCacheRef = useRef(new Map<string, LookupHit | null>());
   const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+  // Vendor of the last item she saved — most scans in a session come
+  // from the same supplier, so the next form starts with it filled in.
+  const lastVendorRef = useRef('');
 
   useEffect(() => {
     itemsRef.current = items;
@@ -479,7 +476,7 @@ export default function InventoryScanner() {
     }
   };
 
-  // Debounced database save for in-list edits (qty, price, category…).
+  // Debounced database save for in-list edits (qty, cost, price, vendor…).
   // Fires 600ms after the last change and sends the item's latest
   // state, so rapid edits collapse into one write of final values.
   const patchTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
@@ -531,6 +528,11 @@ export default function InventoryScanner() {
     [],
   );
 
+  const vendorPrefill = () =>
+    lastVendorRef.current ||
+    itemsRef.current.find((i) => i.vendor)?.vendor ||
+    '';
+
   const openPendingFor = (code: string, found: LookupHit | null) => {
     setPending({
       barcode: code,
@@ -538,6 +540,8 @@ export default function InventoryScanner() {
       brand: found?.brand ?? '',
       size: found?.size ?? '',
       price: '',
+      cost: '',
+      vendor: vendorPrefill(),
       qty: 1,
       category: found?.category ?? '',
       audience: 'unisex',
@@ -545,7 +549,7 @@ export default function InventoryScanner() {
     });
     setStatus(
       found
-        ? 'Found it — check the details, add the price, then save.'
+        ? 'Found it — add the cost, selling price and vendor, then save.'
         : 'Barcode not recognized — type the product name in, then save.',
     );
   };
@@ -792,22 +796,23 @@ export default function InventoryScanner() {
       setStatus('Give the product a name before saving.');
       return;
     }
-    if (!pending.category) {
-      setStatus('Pick a category (Fragrance, Skincare, or Makeup) before saving — the website needs it to place the product.');
-      return;
-    }
-    const price =
-      pending.price.trim() === '' ? null : Number.parseFloat(pending.price);
+    const toMoney = (s: string) => {
+      const n = s.trim() === '' ? null : Number.parseFloat(s);
+      return n !== null && Number.isFinite(n) && n >= 0 ? n : null;
+    };
     const newItem: InvItem = {
       barcode: pending.barcode,
       name: pending.name.trim(),
       brand: pending.brand.trim(),
       size: pending.size.trim(),
-      price: price !== null && Number.isFinite(price) ? price : null,
+      price: toMoney(pending.price),
+      cost: toMoney(pending.cost),
+      vendor: pending.vendor.trim(),
       qty: Math.max(1, Math.floor(pending.qty) || 1),
       category: pending.category,
       audience: pending.audience,
     };
+    if (newItem.vendor) lastVendorRef.current = newItem.vendor;
     if (mode === 'db') {
       setBusy(true);
       try {
@@ -870,6 +875,8 @@ export default function InventoryScanner() {
 
   const totalUnits = items.reduce((s, i) => s + i.qty, 0);
   const totalValue = items.reduce((s, i) => s + (i.price ?? 0) * i.qty, 0);
+  const totalCost = items.reduce((s, i) => s + (i.cost ?? 0) * i.qty, 0);
+  const vendorOptions = [...new Set(items.map((i) => i.vendor).filter(Boolean))];
   const today = new Date().toISOString().slice(0, 10);
 
   const exportCsv = () => {
@@ -878,9 +885,9 @@ export default function InventoryScanner() {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const rows = [
-      'barcode,name,brand,size,price,quantity,category,audience',
+      'barcode,name,cost,selling_price,quantity,vendor',
       ...items.map((i) =>
-        [i.barcode, i.name, i.brand, i.size, i.price ?? '', i.qty, i.category, i.audience]
+        [i.barcode, i.name, i.cost ?? '', i.price ?? '', i.qty, i.vendor]
           .map(esc)
           .join(','),
       ),
@@ -1077,7 +1084,7 @@ export default function InventoryScanner() {
           <button
             onClick={() => {
               stopScanner();
-              setPending({ barcode: '', name: '', brand: '', size: '', price: '', qty: 1, category: '', audience: 'unisex', priceHints: [] });
+              setPending({ barcode: '', name: '', brand: '', size: '', price: '', cost: '', vendor: vendorPrefill(), qty: 1, category: '', audience: 'unisex', priceHints: [] });
               setStatus('Adding an item with no barcode — fill in the name.');
             }}
             className="mt-2 text-sm font-medium text-rose-600 dark:text-rose-400"
@@ -1107,82 +1114,74 @@ export default function InventoryScanner() {
                 aria-label="Product name"
               />
               <div className="grid grid-cols-2 gap-3">
-                <select
-                  value={pending.category}
-                  onChange={(e) =>
-                    setPending({ ...pending, category: e.target.value as InvCategory | '' })
-                  }
-                  className={inputCls}
-                  aria-label="Category"
-                >
-                  <option value="">Category * — choose…</option>
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={pending.audience}
-                  onChange={(e) =>
-                    setPending({ ...pending, audience: e.target.value as InvAudience })
-                  }
-                  className={inputCls}
-                  aria-label="Who it is for"
-                >
-                  {AUDIENCE_OPTIONS.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.label}
-                    </option>
-                  ))}
-                </select>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">
+                    Cost — what you paid ($)
+                  </span>
+                  <input
+                    value={pending.cost}
+                    onChange={(e) => setPending({ ...pending, cost: e.target.value })}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    className={inputCls}
+                    aria-label="Cost in dollars"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">
+                    Selling price ($)
+                  </span>
+                  <input
+                    value={pending.price}
+                    onChange={(e) => setPending({ ...pending, price: e.target.value })}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    className={inputCls}
+                    aria-label="Selling price in dollars"
+                  />
+                </label>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">
+                  Vendor — who you buy it from
+                </span>
                 <input
-                  value={pending.brand}
-                  onChange={(e) => setPending({ ...pending, brand: e.target.value })}
-                  placeholder="Brand"
+                  value={pending.vendor}
+                  onChange={(e) => setPending({ ...pending, vendor: e.target.value })}
+                  placeholder="e.g. LA Beauty Supply"
                   className={inputCls}
-                  aria-label="Brand"
+                  aria-label="Vendor"
+                  list="vendor-suggestions"
+                  autoComplete="off"
                 />
-                <input
-                  value={pending.size}
-                  onChange={(e) => setPending({ ...pending, size: e.target.value })}
-                  placeholder="Size (e.g. 50 ml)"
-                  className={inputCls}
-                  aria-label="Size"
-                />
-                <input
-                  value={pending.price}
-                  onChange={(e) => setPending({ ...pending, price: e.target.value })}
-                  inputMode="decimal"
-                  placeholder="Price ($)"
-                  className={inputCls}
-                  aria-label="Price in dollars"
-                />
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-stone-500 dark:text-stone-400">Qty</span>
-                  <button
-                    onClick={() => setPending({ ...pending, qty: Math.max(1, pending.qty - 1) })}
-                    className="h-10 w-10 rounded-full border border-stone-300 text-lg dark:border-stone-700"
-                    aria-label="One less"
-                  >
-                    −
-                  </button>
-                  <span className="w-8 text-center font-semibold">{pending.qty}</span>
-                  <button
-                    onClick={() => setPending({ ...pending, qty: pending.qty + 1 })}
-                    className="h-10 w-10 rounded-full border border-stone-300 text-lg dark:border-stone-700"
-                    aria-label="One more"
-                  >
-                    +
-                  </button>
-                </div>
+                <datalist id="vendor-suggestions">
+                  {vendorOptions.map((v) => (
+                    <option key={v} value={v} />
+                  ))}
+                </datalist>
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-stone-500 dark:text-stone-400">How many?</span>
+                <button
+                  onClick={() => setPending({ ...pending, qty: Math.max(1, pending.qty - 1) })}
+                  className="h-11 w-11 rounded-full border border-stone-300 text-lg dark:border-stone-700"
+                  aria-label="One less"
+                >
+                  −
+                </button>
+                <span className="w-8 text-center font-semibold">{pending.qty}</span>
+                <button
+                  onClick={() => setPending({ ...pending, qty: pending.qty + 1 })}
+                  className="h-11 w-11 rounded-full border border-stone-300 text-lg dark:border-stone-700"
+                  aria-label="One more"
+                >
+                  +
+                </button>
               </div>
               {pending.priceHints.length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-stone-500 dark:text-stone-400">
-                    Selling online at — tap one to use it as the price:
+                    Selling online at — tap one to use it as the selling price:
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {pending.priceHints.map((h) => (
@@ -1265,7 +1264,11 @@ export default function InventoryScanner() {
           <strong className="text-stone-900 dark:text-stone-50">
             ${totalValue.toFixed(2)}
           </strong>{' '}
-          total value
+          at selling price ·{' '}
+          <strong className="text-stone-900 dark:text-stone-50">
+            ${totalCost.toFixed(2)}
+          </strong>{' '}
+          at cost
         </p>
         {items.length > 0 && (
           <div className="flex gap-2">
@@ -1324,7 +1327,7 @@ export default function InventoryScanner() {
                 <div>
                   <p className="font-medium text-stone-900 dark:text-stone-50">{item.name}</p>
                   <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
-                    {[item.brand, item.size, item.barcode ? `UPC ${item.barcode}` : 'no barcode']
+                    {[item.vendor, item.barcode ? `UPC ${item.barcode}` : 'no barcode']
                       .filter(Boolean)
                       .join(' · ')}
                   </p>
@@ -1337,42 +1340,17 @@ export default function InventoryScanner() {
                   ✕
                 </button>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <select
-                  value={item.category}
-                  onChange={(e) =>
-                    updateItem(idx, { category: e.target.value as InvCategory | '' })
-                  }
+              <div className="mt-3">
+                <input
+                  value={item.vendor}
+                  onChange={(e) => updateItem(idx, { vendor: e.target.value })}
+                  placeholder="Vendor — who you buy it from"
                   className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
-                  aria-label={`Category for ${item.name}`}
-                >
-                  <option value="">Category — choose…</option>
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={item.audience}
-                  onChange={(e) =>
-                    updateItem(idx, { audience: e.target.value as InvAudience })
-                  }
-                  className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
-                  aria-label={`Who ${item.name} is for`}
-                >
-                  {AUDIENCE_OPTIONS.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.label}
-                    </option>
-                  ))}
-                </select>
+                  aria-label={`Vendor for ${item.name}`}
+                  list="vendor-suggestions"
+                  autoComplete="off"
+                />
               </div>
-              {item.category === '' && (
-                <p className="mt-2 text-xs font-medium text-amber-600 dark:text-amber-400">
-                  Pick a category above — without one, this item can&apos;t go on the website yet.
-                </p>
-              )}
               <div className="mt-3 flex items-center gap-4">
                 <div className="flex items-center gap-2">
                   <button
@@ -1392,7 +1370,24 @@ export default function InventoryScanner() {
                   </button>
                 </div>
                 <label className="flex items-center gap-1.5 text-sm text-stone-500 dark:text-stone-400">
-                  $
+                  Cost $
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={item.cost ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? null : Number.parseFloat(e.target.value);
+                      updateItem(idx, { cost: v !== null && Number.isFinite(v) ? v : null });
+                    }}
+                    placeholder="0.00"
+                    className="w-20 rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
+                    aria-label={`Cost for ${item.name}`}
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-sm text-stone-500 dark:text-stone-400">
+                  Sell $
                   <input
                     type="number"
                     inputMode="decimal"
@@ -1404,8 +1399,8 @@ export default function InventoryScanner() {
                       updateItem(idx, { price: v !== null && Number.isFinite(v) ? v : null });
                     }}
                     placeholder="0.00"
-                    className="w-24 rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
-                    aria-label={`Price for ${item.name}`}
+                    className="w-20 rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-stone-900 outline-none focus:border-rose-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100"
+                    aria-label={`Selling price for ${item.name}`}
                   />
                 </label>
                 <span className="ml-auto text-sm font-medium text-stone-700 dark:text-stone-200">

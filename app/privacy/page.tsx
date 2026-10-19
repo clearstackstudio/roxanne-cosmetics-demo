@@ -4,7 +4,7 @@ export default function PrivacyPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-12">
       <h1 className="font-serif text-3xl text-stone-900 dark:text-stone-50">Privacy Policy</h1>
-      <p className="mt-2 text-sm text-stone-500">
+      <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">
         Demo starter language — not reviewed by an attorney. The shop should have
         this reviewed before real use.
       </p>
